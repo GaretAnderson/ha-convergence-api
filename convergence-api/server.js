@@ -8,7 +8,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.3.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.3.1' });
 });
 
 // ─── Agent Relay ─────────────────────────────────────────────────────────────
