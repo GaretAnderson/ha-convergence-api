@@ -152,6 +152,28 @@ send = async function() {
     });
   } catch (e) { addMessage('system', 'Failed: ' + e.message); }
 };
+
+// Paste image from clipboard
+document.addEventListener('paste', async (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      const preview = document.getElementById('preview');
+      const img = document.getElementById('preview-img');
+      img.src = URL.createObjectURL(file);
+      preview.style.display = 'block';
+      try {
+        const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+        const data = await resp.json();
+        pendingAttachment = data.url;
+      } catch (err) { addMessage('system', 'Upload failed: ' + err.message); }
+      break;
+    }
+  }
+});
 </script>
 </body>
 </html>
