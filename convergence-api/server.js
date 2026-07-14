@@ -102,6 +102,13 @@ app.get('/relay', (_req, res) => {
   res.json(summary);
 });
 
+
+// ─── Chat PWA ────────────────────────────────────────────────────────────────
+
+const path = require('path');
+app.get('/chat', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'chat.html'));
+});
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 app.listen(PORT, '0.0.0.0', () => {
