@@ -1,0 +1,22 @@
+name: "Convergence API"
+description: "Always-on API for agent relay, thread board, and pipeline status. Provides real-time cross-machine agent messaging via SSE."
+version: "0.1.0"
+slug: "convergence_api"
+init: false
+arch:
+  - amd64
+  - armhf
+  - armv7
+  - aarch64
+ports:
+  8088/tcp: 8088
+ports_description:
+  8088/tcp: "Convergence API (REST + SSE)"
+options:
+  github_token: ""
+  cards_repo: "GaretAnderson/thread-board-cards"
+  relay_max_messages: 50
+schema:
+  github_token: str
+  cards_repo: str
+  relay_max_messages: int
