@@ -65,7 +65,13 @@ function addMessage(from, body, sent = false, timestamp = null) {
   const div = document.createElement('div');
   div.className = 'msg ' + (sent ? 'sent' : 'received');
   const time = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
-  div.innerHTML = (sent ? '' : `<div class="from">${from}</div>`) + body + `<div class="time">${time}</div>`;
+  let bodyHtml = body;
+  // Render image attachments inline
+  const imgMatch = body.match(/\[image: (\/files\/\S+)\]/);
+  if (imgMatch) {
+    bodyHtml = body.replace(imgMatch[0], '') + `<br><img src="${API}${imgMatch[1]}" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;" onclick="window.open('${API}${imgMatch[1]}')">`;
+  }
+  div.innerHTML = (sent ? '' : `<div class="from">${from}</div>`) + bodyHtml + `<div class="time">${time}</div>`;
   document.getElementById('messages').appendChild(div);
   div.scrollIntoView({ behavior: 'smooth' });
 }
@@ -95,7 +101,11 @@ function connect() {
   es.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.from !== 'phone') addMessage(msg.from, msg.body, false, msg.timestamp);
+      if (msg.from !== 'phone') {
+            let body = msg.body;
+            if (msg.attachments && msg.attachments.length) body += ' [image: ' + msg.attachments[0] + ']';
+            addMessage(msg.from, body, false, msg.timestamp);
+          }
     } catch {}
   };
   es.onerror = () => {
@@ -148,7 +158,7 @@ send = async function() {
   try {
     await fetch(`${API}/relay/${TOPIC}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: 'phone', to: currentTo, body: body || 'image', attachments: attachment ? [attachment] : [], metadata: {} })
+      body: JSON.stringify({ from: 'phone', to: currentTo, body: (body || '') + (attachment ? ' [image: ' + attachment + ']' : ''), attachments: attachment ? [attachment] : [], metadata: {} })
     });
   } catch (e) { addMessage('system', 'Failed: ' + e.message); }
 };

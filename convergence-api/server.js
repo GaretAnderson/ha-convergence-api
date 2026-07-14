@@ -1,14 +1,14 @@
 const express = require('express');
 const app = express();
 const PORT = 8088;
-const RELAY_MAX = parseInt(process.env.RELAY_MAX || '50', 10);
+const RELAY_MAX = parseInt(process.env.RELAY_MAX || '500', 10);
 
 app.use(express.json());
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.3.1' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.4.0' });
 });
 
 // ─── Agent Relay ─────────────────────────────────────────────────────────────
