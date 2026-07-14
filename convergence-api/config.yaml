@@ -1,6 +1,6 @@
 name: "Convergence API"
 description: "Always-on API for agent relay, thread board, and pipeline status. Provides real-time cross-machine agent messaging via SSE."
-version: "0.2.0"
+version: "0.3.0"
 slug: "convergence_api"
 init: false
 arch:
