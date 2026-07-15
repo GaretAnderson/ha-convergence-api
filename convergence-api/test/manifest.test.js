@@ -12,11 +12,11 @@ const {
   getRoutes
 } = require('../server');
 
-function readConfigValue(pattern) {
+function readConfigValue(pattern, group = 1) {
   const config = fs.readFileSync(path.join(__dirname, '..', 'config.yaml'), 'utf8');
   const match = config.match(pattern);
   assert.ok(match, `expected config.yaml to match ${pattern}`);
-  return match[1];
+  return match[group];
 }
 
 test('manifest exposes live routes, version, port, schema, and retention', async () => {
@@ -37,7 +37,7 @@ test('manifest exposes live routes, version, port, schema, and retention', async
     assert.equal(manifest.version, VERSION);
     assert.equal(manifest.version, readConfigValue(/version:\s+"([^"]+)"/));
     assert.equal(manifest.port, DEFAULT_PORT);
-    assert.equal(manifest.port, Number(readConfigValue(/8088\/tcp:\s+(\d+)/)));
+    assert.equal(manifest.port, Number(readConfigValue(/ports:\s*\n\s+(\d+)\/tcp:\s+(\d+)/, 2)));
     assert.deepEqual(manifest.recordSchema, RECORD_SCHEMA);
     assert.deepEqual(manifest.retention, {
       storage: 'memory',
