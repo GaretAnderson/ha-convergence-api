@@ -19,7 +19,9 @@ function readConfigLines() {
 function readConfigVersion() {
   const line = readConfigLines().find(entry => entry.startsWith('version:'));
   assert.ok(line, 'expected config.yaml version');
-  return line.split(':')[1].trim().replace(/^"|"$/g, '');
+  const match = line.match(/^version:\s+"([^"]+)"$/);
+  assert.ok(match, 'expected quoted config.yaml version');
+  return match[1];
 }
 
 function readConfigPort() {
@@ -28,7 +30,9 @@ function readConfigPort() {
     .find(entry => /^\d+\/tcp:\s+\d+$/.test(entry));
 
   assert.ok(portLine, 'expected config.yaml port mapping');
-  const [externalPort, internalPort] = portLine.match(/\d+/g).map(Number);
+  const matches = portLine.match(/\d+/g);
+  assert.ok(matches && matches.length === 2, 'expected config.yaml external/internal port mapping');
+  const [externalPort, internalPort] = matches.map(Number);
   assert.equal(externalPort, internalPort);
   return internalPort;
 }
