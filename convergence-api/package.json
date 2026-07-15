@@ -1,8 +1,11 @@
 {
   "name": "convergence-api",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "private": true,
   "dependencies": {
     "express": "^4.21.0"
+  },
+  "scripts": {
+    "test": "node --test"
   }
 }
