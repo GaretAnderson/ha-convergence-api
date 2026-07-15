@@ -8,5 +8,5 @@ RELAY_MAX=$(jq -r '.relay_max_messages // 50' /data/options.json)
 export GITHUB_TOKEN CARDS_REPO RELAY_MAX
 
 cd /app
-echo "[convergence-api] Starting on port 8088 (relay max: ${RELAY_MAX})"
+echo "[convergence-api] Starting on port 8188 (relay max: ${RELAY_MAX})"
 exec node server.js

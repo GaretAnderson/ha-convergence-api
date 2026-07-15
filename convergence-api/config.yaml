@@ -9,9 +9,9 @@ arch:
   - armv7
   - aarch64
 ports:
-  8088/tcp: 8088
+  8188/tcp: 8188
 ports_description:
-  8088/tcp: "Convergence API (REST + SSE)"
+  8188/tcp: "Convergence API (REST + SSE)"
 options:
   github_token: ""
   cards_repo: "GaretAnderson/thread-board-cards"
