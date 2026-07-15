@@ -184,6 +184,46 @@ document.addEventListener('paste', async (e) => {
     }
   }
 });
+// Paste image from clipboard
+async function handlePaste(e) {
+  const items = e.clipboardData?.items || [];
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (!file) continue;
+      const preview = document.getElementById('preview');
+      const img = document.getElementById('preview-img');
+      img.src = URL.createObjectURL(file);
+      preview.style.display = 'block';
+      try {
+        const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+        const data = await resp.json();
+        pendingAttachment = data.url;
+        addMessage('system', 'Image attached. Send when ready.');
+      } catch (err) { addMessage('system', 'Upload failed: ' + err.message); }
+      return;
+    }
+  }
+}
+window.addEventListener('paste', handlePaste);
+
+// Drag and drop images
+document.getElementById('messages').addEventListener('dragover', (e) => { e.preventDefault(); });
+document.getElementById('messages').addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (!file || !file.type.startsWith('image/')) return;
+  const preview = document.getElementById('preview');
+  const img = document.getElementById('preview-img');
+  img.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+  try {
+    const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+    const data = await resp.json();
+    pendingAttachment = data.url;
+  } catch (err) { addMessage('system', 'Upload failed: ' + err.message); }
+});
 </script>
 </body>
 </html>

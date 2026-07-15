@@ -8,9 +8,38 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.4.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.4.1' });
 });
 
+// ─── File Upload + Serving ───────────────────────────────────────────────────
+
+const fs = require('fs');
+const crypto = require('crypto');
+const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/files';
+
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// POST /relay/upload — upload a file, get back a URL
+app.post('/relay/upload', express.raw({ type: '*/*', limit: '20mb' }), (req, res) => {
+  const ext = (req.headers['content-type'] || 'application/octet-stream').split('/')[1] || 'bin';
+  const id = crypto.randomBytes(8).toString('hex');
+  const filename = `${id}.${ext.replace(/[^a-z0-9]/g, '')}`;
+  const filepath = path.join(UPLOAD_DIR, filename);
+
+  fs.writeFileSync(filepath, req.body);
+  const url = `/files/${filename}`;
+  console.log(`[upload] ${filename} (${req.body.length} bytes)`);
+  res.status(201).json({ id, filename, url, size: req.body.length });
+});
+
+// GET /files/:filename — serve uploaded files
+app.get('/files/:filename', (req, res) => {
+  const filepath = path.join(UPLOAD_DIR, req.params.filename);
+  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'not found' });
+  res.sendFile(filepath);
+});
+
+// ─── Chat PWA
 // ─── Agent Relay ─────────────────────────────────────────────────────────────
 // In-memory pub/sub with SSE push. Topics created on first use.
 
@@ -103,34 +132,6 @@ app.get('/relay', (_req, res) => {
 });
 
 
-
-// ─── File Upload + Serving ───────────────────────────────────────────────────
-
-const fs = require('fs');
-const crypto = require('crypto');
-const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/files';
-
-if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// POST /relay/upload — upload a file, get back a URL
-app.post('/relay/upload', express.raw({ type: '*/*', limit: '20mb' }), (req, res) => {
-  const ext = (req.headers['content-type'] || 'application/octet-stream').split('/')[1] || 'bin';
-  const id = crypto.randomBytes(8).toString('hex');
-  const filename = `${id}.${ext.replace(/[^a-z0-9]/g, '')}`;
-  const filepath = path.join(UPLOAD_DIR, filename);
-
-  fs.writeFileSync(filepath, req.body);
-  const url = `/files/${filename}`;
-  console.log(`[upload] ${filename} (${req.body.length} bytes)`);
-  res.status(201).json({ id, filename, url, size: req.body.length });
-});
-
-// GET /files/:filename — serve uploaded files
-app.get('/files/:filename', (req, res) => {
-  const filepath = path.join(UPLOAD_DIR, req.params.filename);
-  if (!fs.existsSync(filepath)) return res.status(404).json({ error: 'not found' });
-  res.sendFile(filepath);
-});
 
 // ─── Chat PWA ────────────────────────────────────────────────────────────────
 
