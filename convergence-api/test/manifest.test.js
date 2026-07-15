@@ -12,11 +12,25 @@ const {
   getRoutes
 } = require('../server');
 
-function readConfigValue(pattern, group = 1) {
-  const config = fs.readFileSync(path.join(__dirname, '..', 'config.yaml'), 'utf8');
-  const match = config.match(pattern);
-  assert.ok(match, `expected config.yaml to match ${pattern}`);
-  return match[group];
+function readConfigLines() {
+  return fs.readFileSync(path.join(__dirname, '..', 'config.yaml'), 'utf8').split(/\r?\n/);
+}
+
+function readConfigVersion() {
+  const line = readConfigLines().find(entry => entry.startsWith('version:'));
+  assert.ok(line, 'expected config.yaml version');
+  return line.split(':')[1].trim().replace(/^"|"$/g, '');
+}
+
+function readConfigPort() {
+  const portLine = readConfigLines()
+    .map(entry => entry.trim())
+    .find(entry => /^\d+\/tcp:\s+\d+$/.test(entry));
+
+  assert.ok(portLine, 'expected config.yaml port mapping');
+  const [externalPort, internalPort] = portLine.match(/\d+/g).map(Number);
+  assert.equal(externalPort, internalPort);
+  return internalPort;
 }
 
 test('manifest exposes live routes, version, port, schema, and retention', async () => {
@@ -35,9 +49,9 @@ test('manifest exposes live routes, version, port, schema, and retention', async
     const registeredRoutes = getRoutes(app);
 
     assert.equal(manifest.version, VERSION);
-    assert.equal(manifest.version, readConfigValue(/version:\s+"([^"]+)"/));
+    assert.equal(manifest.version, readConfigVersion());
     assert.equal(manifest.port, DEFAULT_PORT);
-    assert.equal(manifest.port, Number(readConfigValue(/ports:\s*\n\s+(\d+)\/tcp:\s+(\d+)/, 2)));
+    assert.equal(manifest.port, readConfigPort());
     assert.deepEqual(manifest.recordSchema, RECORD_SCHEMA);
     assert.deepEqual(manifest.retention, {
       storage: 'memory',

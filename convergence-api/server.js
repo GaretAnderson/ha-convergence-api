@@ -113,7 +113,7 @@ function createApp(options = {}) {
   registerRoute(app, routeDescriptions, 'post', '/relay/:topic', 'Publish a message to a topic', (req, res) => {
     const topic = getTopic(req.params.topic);
     const msg = {
-      id: crypto.randomBytes(12).toString('hex'),
+      id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       from: req.body.from || 'unknown',
       body: req.body.body || '',
