@@ -113,6 +113,7 @@ function createApp(options = {}) {
   registerRoute(app, routeDescriptions, 'post', '/relay/:topic', 'Publish a message to a topic', (req, res) => {
     const topic = getTopic(req.params.topic);
     const msg = {
+      // UUIDs avoid collisions better than timestamp/random string concatenation.
       id: crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       from: req.body.from || 'unknown',
