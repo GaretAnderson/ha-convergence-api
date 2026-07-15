@@ -12,28 +12,25 @@ const {
   getRoutes
 } = require('../server');
 
-const CONFIG_VERSION_PATTERN = /^version:\s+["']?([^"']+)["']?$/;
-const CONFIG_PORT_PATTERN = /^(\d+)\/tcp:\s+(\d+)$/;
-
-function readConfigLines() {
-  return fs.readFileSync(path.join(__dirname, '..', 'config.yaml'), 'utf8').split(/\r?\n/);
-}
+const YAML_SCALAR_PATTERN = /^version:\s+["']?([^"']+)["']?$/;
+const DOCKER_PORT_MAPPING_PATTERN = /^(\d+)\/tcp:\s+(\d+)$/;
+const CONFIG_LINES = fs.readFileSync(path.join(__dirname, '..', 'config.yaml'), 'utf8').split(/\r?\n/);
 
 function readConfigVersion() {
-  const line = readConfigLines().find(entry => entry.startsWith('version:'));
+  const line = CONFIG_LINES.find(entry => entry.startsWith('version:'));
   assert.ok(line, 'expected config.yaml version');
-  const match = line.match(CONFIG_VERSION_PATTERN);
+  const match = line.match(YAML_SCALAR_PATTERN);
   assert.ok(match, 'expected parseable config.yaml version');
   return match[1];
 }
 
 function readConfigPort() {
-  const portLine = readConfigLines()
+  const portLine = CONFIG_LINES
     .map(entry => entry.trim())
-    .find(entry => CONFIG_PORT_PATTERN.test(entry));
+    .find(entry => DOCKER_PORT_MAPPING_PATTERN.test(entry));
 
   assert.ok(portLine, 'expected config.yaml port mapping');
-  const match = portLine.match(CONFIG_PORT_PATTERN);
+  const match = portLine.match(DOCKER_PORT_MAPPING_PATTERN);
   assert.ok(match, 'expected config.yaml external/internal port mapping');
   const externalPort = Number(match[1]);
   const internalPort = Number(match[2]);
