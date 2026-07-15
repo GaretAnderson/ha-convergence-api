@@ -5,15 +5,15 @@ Always-on API add-on for Home Assistant. Provides:
 - **Agent Relay** — real-time cross-machine messaging via SSE
 - **Health endpoint** — uptime and version check
 
-## Endpoints
+## API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Health check (uptime, version) |
-| POST | `/relay/:topic` | Publish a message to a topic |
-| GET | `/relay/:topic` | Poll recent messages (optional `?since=` ISO timestamp) |
-| GET | `/relay/:topic/stream` | SSE subscription (real-time push) |
-| GET | `/relay` | List all active topics with stats |
+For the live API surface, version, route list, schema, and retention details, query the relay directly:
+
+```bash
+curl http://homeassistant.local:8088/api/manifest
+```
+
+Use `/api/manifest` as the source of truth instead of copying route tables into documentation.
 
 ## Agent Relay
 
@@ -43,7 +43,7 @@ curl http://homeassistant.local:8088/relay/agent-relay?since=2026-07-13T12:00:00
 |--------|---------|-------------|
 | `github_token` | (empty) | GitHub PAT for future thread-board integration |
 | `cards_repo` | `GaretAnderson/thread-board-cards` | Thread board cards repo |
-| `relay_max_messages` | 50 | Max messages retained per topic |
+| `relay_max_messages` | 500 | Max messages retained per topic |
 
 ## Port
 
