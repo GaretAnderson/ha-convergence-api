@@ -58,7 +58,10 @@ header .status { font-size: 12px; color: #4ecca3; }
   <button id="send-btn">Send</button>
 </div>
 <script>
-const API = window.location.origin;
+// API base: derive from the current path so requests work both when served
+// directly (/chat) and behind Home Assistant ingress (/api/hassio_ingress/<token>/).
+// Strips the final path segment (the page itself) to get the directory prefix.
+const API = window.location.pathname.replace(/\/[^/]*$/, '');
 const TOPIC = 'agent-relay';
 let currentTo = '@aorus';
 let lastTimestamp = new Date(Date.now() - 3600000).toISOString();

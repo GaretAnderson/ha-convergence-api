@@ -8,7 +8,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.5.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.6.0' });
 });
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
@@ -232,6 +232,12 @@ app.get('/relay', (_req, res) => {
 // ─── Chat PWA ────────────────────────────────────────────────────────────────
 
 app.get('/chat', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'chat.html'));
+});
+
+// Ingress serves the addon at its root path — surface the chat there too so it
+// appears as a native Home Assistant sidebar panel ("Agent Chat").
+app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'chat.html'));
 });
 // ─── Start ───────────────────────────────────────────────────────────────────
