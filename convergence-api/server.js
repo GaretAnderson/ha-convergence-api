@@ -8,7 +8,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.4.4' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.5.0' });
 });
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
@@ -118,7 +118,8 @@ app.post('/relay/:topic', (req, res) => {
     body: req.body.body || '',
     attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
     replyTo: req.body.replyTo || null,
-    metadata: req.body.metadata || {}
+    metadata: req.body.metadata || {},
+    receipts: { delivered: [], read: [] }
   };
 
   topic.messages.push(msg);
@@ -157,6 +158,31 @@ app.delete('/relay/:topic/:id', (req, res) => {
   }
   console.log(`[relay] ${req.params.topic}: deleted ${req.params.id}`);
   res.json({ deleted: req.params.id });
+});
+
+// POST /relay/:topic/:id/receipt — acknowledge delivery/read of a message
+app.post('/relay/:topic/:id/receipt', (req, res) => {
+  const topic = getTopic(req.params.topic);
+  const msg = topic.messages.find(m => m.id === req.params.id);
+  if (!msg) return res.status(404).json({ error: 'not found' });
+
+  const agent = (req.body.from || req.body.agent || 'unknown').toString();
+  const status = req.body.status === 'read' ? 'read' : 'delivered';
+  if (!msg.receipts) msg.receipts = { delivered: [], read: [] };
+  if (!Array.isArray(msg.receipts.delivered)) msg.receipts.delivered = [];
+  if (!Array.isArray(msg.receipts.read)) msg.receipts.read = [];
+
+  // A read receipt implies delivered too.
+  if (!msg.receipts.delivered.includes(agent)) msg.receipts.delivered.push(agent);
+  if (status === 'read' && !msg.receipts.read.includes(agent)) msg.receipts.read.push(agent);
+
+  saveStore();
+  const evt = { receipt: { id: msg.id, agent, status, receipts: msg.receipts } };
+  for (const sub of topic.subscribers) {
+    sub.write(`data: ${JSON.stringify(evt)}\n\n`);
+  }
+  console.log(`[relay] ${req.params.topic}: receipt ${status} for ${msg.id} by ${agent}`);
+  res.json(evt.receipt);
 });
 
 // GET /relay/:topic/stream — SSE subscription
