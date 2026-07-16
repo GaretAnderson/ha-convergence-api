@@ -85,8 +85,11 @@ function renderMessage(msg) {
   div.dataset.id = msg.id;
 
   let text = msg.body || '';
-  const urls = Array.isArray(msg.attachments) ? msg.attachments.slice() : [];
-  text = text.replace(/\[image: (\/files\/\S+)\]/g, (_m, u) => { urls.push(u); return ''; });
+  const urls = [];
+  const seenUrls = new Set();
+  const addUrl = (u) => { if (!seenUrls.has(u)) { seenUrls.add(u); urls.push(u); } };
+  if (Array.isArray(msg.attachments)) msg.attachments.forEach(addUrl);
+  text = text.replace(/\[image: (\/files\/\S+)\]/g, (_m, u) => { addUrl(u); return ''; });
   const time = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
 
   div.innerHTML =

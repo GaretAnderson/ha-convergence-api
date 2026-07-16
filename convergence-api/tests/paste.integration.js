@@ -82,6 +82,14 @@ async function pasteImages(page, n) {
     await page.click('#send-btn');
     await page.waitForTimeout(1000);
 
+    // Assert the RENDERED message shows each image exactly once (regression: double-render)
+    const renderedImgs = await page.evaluate(() => {
+      const msgs = document.querySelectorAll('#messages .msg');
+      const last = msgs[msgs.length - 1];
+      return last ? last.querySelectorAll('img.att').length : -1;
+    });
+    if (renderedImgs !== 2) fail(`rendered message should show 2 images exactly, got ${renderedImgs} (double-render?)`);
+
     const sent = await page.evaluate(async (base) => {
       const j = await (await fetch(base + '/relay/agent-relay')).json();
       const m = j.messages[j.messages.length - 1];
