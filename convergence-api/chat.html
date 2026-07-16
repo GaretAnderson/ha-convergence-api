@@ -13,15 +13,21 @@ header { padding: 12px 16px; background: #16213e; border-bottom: 1px solid #0f34
 header h1 { font-size: 16px; font-weight: 600; }
 header .status { font-size: 12px; color: #4ecca3; }
 #messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; }
+.msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; position: relative; word-break: break-word; }
 .msg.sent { align-self: flex-end; background: #0f3460; color: #fff; }
 .msg.received { align-self: flex-start; background: #16213e; border: 1px solid #0f3460; }
 .msg .from { font-size: 11px; color: #4ecca3; margin-bottom: 4px; }
+.msg .text { white-space: pre-wrap; }
+.msg .att { display: block; max-width: 100%; max-height: 300px; border-radius: 8px; margin-top: 6px; cursor: pointer; }
+.msg .del { position: absolute; top: 2px; right: 4px; background: transparent; border: none; color: #aaa; font-size: 15px; line-height: 1; cursor: pointer; opacity: 0.4; padding: 2px; }
+.msg:hover .del { opacity: 1; }
 .msg .time { font-size: 10px; color: #666; margin-top: 4px; }
 #input-bar { padding: 12px; background: #16213e; border-top: 1px solid #0f3460; display: flex; gap: 8px; flex-wrap: wrap; }
 #attach-btn { padding: 10px; border-radius: 50%; border: 1px solid #0f3460; background: transparent; color: #4ecca3; font-size: 18px; cursor: pointer; }
-#preview { width: 100%; max-height: 100px; display: none; padding: 4px; }
-#preview img { max-height: 80px; border-radius: 8px; }
+#preview { width: 100%; display: none; gap: 6px; flex-wrap: wrap; padding: 4px; }
+#preview .thumb { position: relative; display: inline-block; }
+#preview .thumb img { max-height: 64px; border-radius: 8px; display: block; }
+#preview .thumb button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: none; background: #e94560; color: #fff; font-size: 12px; line-height: 1; cursor: pointer; padding: 0; }
 #input-bar input { flex: 1; padding: 10px 14px; border-radius: 20px; border: 1px solid #0f3460; background: #1a1a2e; color: #e0e0e0; font-size: 14px; outline: none; }
 #input-bar input:focus { border-color: #4ecca3; }
 #input-bar button { padding: 10px 18px; border-radius: 20px; border: none; background: #4ecca3; color: #1a1a2e; font-weight: 600; font-size: 14px; cursor: pointer; }
@@ -42,7 +48,7 @@ header .status { font-size: 12px; color: #4ecca3; }
   <button data-to="@all">@all</button>
 </div>
 <div id="messages"></div>
-<div id="preview"><img id="preview-img" alt="attachment preview"></div>
+<div id="preview"></div>
 <div id="input-bar">
   <input type="file" id="file-input" accept="image/*" style="display:none">
   <button id="attach-btn" title="Attach image">📎</button>
@@ -64,51 +70,90 @@ document.querySelectorAll('.addressing button').forEach(btn => {
   });
 });
 
-function addMessage(from, body, sent = false, timestamp = null) {
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function imgTag(url) { return `<img class="att" src="${API}${url}" onclick="window.open('${API}${url}')">`; }
+
+let pendingAttachments = [];   // staged upload URLs for the next message
+const seen = new Set();        // rendered message ids (dedup across SSE + history)
+
+function renderMessage(msg) {
+  if (!msg || !msg.id || seen.has(msg.id)) return;
+  seen.add(msg.id);
+  const sent = msg.from === 'phone';
   const div = document.createElement('div');
   div.className = 'msg ' + (sent ? 'sent' : 'received');
-  const time = timestamp ? new Date(timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
-  let bodyHtml = body;
-  // Render image attachments inline
-  const imgMatch = body.match(/\[image: (\/files\/\S+)\]/);
-  if (imgMatch) {
-    bodyHtml = body.replace(imgMatch[0], '') + `<br><img src="${API}${imgMatch[1]}" style="max-width:100%;max-height:300px;border-radius:8px;margin-top:6px;" onclick="window.open('${API}${imgMatch[1]}')">`;
-  }
-  div.innerHTML = (sent ? '' : `<div class="from">${from}</div>`) + bodyHtml + `<div class="time">${time}</div>`;
+  div.dataset.id = msg.id;
+
+  let text = msg.body || '';
+  const urls = Array.isArray(msg.attachments) ? msg.attachments.slice() : [];
+  text = text.replace(/\[image: (\/files\/\S+)\]/g, (_m, u) => { urls.push(u); return ''; });
+  const time = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
+
+  div.innerHTML =
+    (sent ? '' : `<div class="from">${escapeHtml(msg.from)}</div>`) +
+    (text.trim() ? `<span class="text">${escapeHtml(text.trim())}</span>` : '') +
+    urls.map(imgTag).join('') +
+    `<div class="time">${time}</div>` +
+    `<button class="del" title="Delete message">&times;</button>`;
+  div.querySelector('.del').addEventListener('click', () => deleteMessage(msg.id));
+  document.getElementById('messages').appendChild(div);
+  div.scrollIntoView({ behavior: 'smooth' });
+}
+
+function removeMessageEl(id) {
+  const el = document.querySelector(`.msg[data-id="${id}"]`);
+  if (el) el.remove();
+  seen.delete(id);
+}
+
+async function deleteMessage(id) {
+  try {
+    const r = await fetch(`${API}/relay/${TOPIC}/${id}`, { method: 'DELETE' });
+    if (r.ok) removeMessageEl(id);
+  } catch {}
+}
+
+function addSystem(text) {
+  const div = document.createElement('div');
+  div.className = 'msg received';
+  div.innerHTML = `<span class="text">${escapeHtml(text)}</span>`;
   document.getElementById('messages').appendChild(div);
   div.scrollIntoView({ behavior: 'smooth' });
 }
 
 async function send() {
   const input = document.getElementById('msg-input');
-  const body = input.value.trim();
-  if (!body) return;
+  const text = input.value.trim();
+  const atts = pendingAttachments.slice();
+  if (!text && !atts.length) return;
   input.value = '';
-  addMessage('me', body, true);
+  pendingAttachments = [];
+  const preview = document.getElementById('preview');
+  preview.innerHTML = '';
+  preview.style.display = 'none';
+  const body = text + atts.map(u => ` [image: ${u}]`).join('');
   try {
-    await fetch(`${API}/relay/${TOPIC}`, {
+    const r = await fetch(`${API}/relay/${TOPIC}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: 'phone', to: currentTo, body, replyTo: 'ha-assist' })
+      body: JSON.stringify({ from: 'phone', to: currentTo, body, attachments: atts, replyTo: 'ha-assist', metadata: {} })
     });
-  } catch (e) { addMessage('system', 'Failed to send: ' + e.message); }
+    renderMessage(await r.json());
+  } catch (e) { addSystem('Failed to send: ' + e.message); }
 }
 
 document.getElementById('send-btn').addEventListener('click', () => send());
 document.getElementById('msg-input').addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
 
-// SSE subscription for real-time responses
+// SSE subscription for real-time messages + deletions
 function connect() {
   const es = new EventSource(`${API}/relay/${TOPIC}/stream`);
   es.onopen = () => document.getElementById('status').textContent = 'connected';
   es.onmessage = (e) => {
     try {
-      const msg = JSON.parse(e.data);
-      if (msg.from !== 'phone') {
-            let body = msg.body;
-            if (msg.attachments && msg.attachments.length) body += ' [image: ' + msg.attachments[0] + ']';
-            addMessage(msg.from, body, false, msg.timestamp);
-          }
+      const data = JSON.parse(e.data);
+      if (data.deleted) { removeMessageEl(data.deleted); return; }
+      renderMessage(data);
     } catch {}
   };
   es.onerror = () => {
@@ -119,92 +164,62 @@ function connect() {
 }
 connect();
 
-// Also poll for messages from before we connected
-fetch(`${API}/relay/${TOPIC}?since=${lastTimestamp}`)
+// Load full persisted history (all senders) so refresh / another device shows the same content
+fetch(`${API}/relay/${TOPIC}`)
   .then(r => r.json())
-  .then(data => {
-    (data.messages || []).forEach(m => {
-      if (m.from !== 'phone') addMessage(m.from, m.body, false, m.timestamp);
-    });
-  }).catch(() => {});
+  .then(data => (data.messages || []).forEach(renderMessage))
+  .catch(() => {});
 
-// Image upload
-let pendingAttachment = null;
+// Image attachments — paste, drop, or file picker; supports multiple per message
+async function uploadImage(file) {
+  const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+  const data = await resp.json();
+  return data.url;
+}
+
+function addThumb(file, url) {
+  const preview = document.getElementById('preview');
+  const thumb = document.createElement('span');
+  thumb.className = 'thumb';
+  thumb.innerHTML = `<img src="${URL.createObjectURL(file)}"><button title="Remove">&times;</button>`;
+  thumb.querySelector('button').addEventListener('click', () => {
+    pendingAttachments = pendingAttachments.filter(u => u !== url);
+    thumb.remove();
+    if (!pendingAttachments.length) preview.style.display = 'none';
+  });
+  preview.appendChild(thumb);
+  preview.style.display = 'flex';
+}
+
+async function stageImage(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  try { const url = await uploadImage(file); pendingAttachments.push(url); addThumb(file, url); }
+  catch (err) { addSystem('Upload failed: ' + err.message); }
+}
+
 document.getElementById('attach-btn').addEventListener('click', () => document.getElementById('file-input').click());
 document.getElementById('file-input').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const preview = document.getElementById('preview');
-  const img = document.getElementById('preview-img');
-  img.src = URL.createObjectURL(file);
-  preview.style.display = 'block';
-  // Upload immediately
-  try {
-    const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
-    const data = await resp.json();
-    pendingAttachment = data.url;
-  } catch (err) { addMessage('system', 'Upload failed: ' + err.message); }
+  for (const f of Array.from(e.target.files)) await stageImage(f);
+  e.target.value = '';
 });
 
-// Override send to include attachment
-const origSend = send;
-send = async function() {
-  const input = document.getElementById('msg-input');
-  const body = input.value.trim();
-  const attachment = pendingAttachment;
-  if (!body && !attachment) return;
-  input.value = '';
-  const displayBody = body + (attachment ? ` [image: ${attachment}]` : '');
-  addMessage('me', displayBody, true);
-  document.getElementById('preview').style.display = 'none';
-  pendingAttachment = null;
-  try {
-    await fetch(`${API}/relay/${TOPIC}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: 'phone', to: currentTo, body: (body || '') + (attachment ? ' [image: ' + attachment + ']' : ''), attachments: attachment ? [attachment] : [], metadata: {} })
-    });
-  } catch (e) { addMessage('system', 'Failed: ' + e.message); }
-};
-
-// Paste image from clipboard (single, null-safe handler)
-async function handlePaste(e) {
+window.addEventListener('paste', async (e) => {
   const items = e.clipboardData?.items || [];
+  let handled = false;
   for (const item of items) {
     if (item.type.startsWith('image/')) {
-      e.preventDefault();
-      const file = item.getAsFile();
-      if (!file) continue;
-      const preview = document.getElementById('preview');
-      const img = document.getElementById('preview-img');
-      img.src = URL.createObjectURL(file);
-      preview.style.display = 'block';
-      try {
-        const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
-        const data = await resp.json();
-        pendingAttachment = data.url;
-        addMessage('system', 'Image attached. Send when ready.');
-      } catch (err) { addMessage('system', 'Upload failed: ' + err.message); }
-      return;
+      const f = item.getAsFile();
+      if (f) { handled = true; await stageImage(f); }
     }
   }
-}
-window.addEventListener('paste', handlePaste);
+  if (handled) e.preventDefault();
+});
 
-// Drag and drop images
-document.getElementById('messages').addEventListener('dragover', (e) => { e.preventDefault(); });
-document.getElementById('messages').addEventListener('drop', async (e) => {
+const msgsEl = document.getElementById('messages');
+msgsEl.addEventListener('dragover', (e) => e.preventDefault());
+msgsEl.addEventListener('drop', async (e) => {
   e.preventDefault();
-  const file = e.dataTransfer.files[0];
-  if (!file || !file.type.startsWith('image/')) return;
-  const preview = document.getElementById('preview');
-  const img = document.getElementById('preview-img');
-  img.src = URL.createObjectURL(file);
-  preview.style.display = 'block';
-  try {
-    const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
-    const data = await resp.json();
-    pendingAttachment = data.url;
-  } catch (err) { addMessage('system', 'Upload failed: ' + err.message); }
+  for (const f of Array.from(e.dataTransfer.files)) await stageImage(f);
 });
 </script>
 </body>
