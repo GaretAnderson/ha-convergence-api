@@ -1,11 +1,10 @@
-// Self-contained integration test for the chat PWA image-paste flow.
+// Self-contained integration test for the chat PWA image/message features.
 //
-// Regression guard for the bug where pasting an image did nothing because the
-// #preview / #attach-btn / #file-input elements were missing from the body, so
-// script init threw on a null addEventListener and the paste handler never bound.
-//
-// Proves the full chain: paste -> preview shows -> upload 201 -> send (button)
-// -> message carries [image: url] -> served 200 as a real image/png.
+// Covers regressions and the feature set:
+//  - paste MULTIPLE images -> multiple preview thumbnails (no "attached" confirmation)
+//  - send -> message carries all images, each served 200 as a real image/png
+//  - persistence -> a reload in a fresh browser context shows the same content (90d store)
+//  - delete -> removing a message drops it from the server and other views
 //
 // Run: node tests/paste.integration.js   (requires: npm i, npx playwright install chromium)
 
@@ -32,69 +31,91 @@ function waitForHealth(timeoutMs = 8000) {
   });
 }
 
+async function pasteImages(page, n) {
+  await page.evaluate(({ b64, n }) => {
+    for (let k = 0; k < n; k++) {
+      const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const file = new File([bytes], `p${k}.png`, { type: 'image/png' });
+      const dt = new DataTransfer(); dt.items.add(file);
+      const evt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+      Object.defineProperty(evt, 'clipboardData', { value: dt });
+      window.dispatchEvent(evt);
+    }
+  }, { b64: PNG_B64, n });
+}
+
 (async () => {
-  const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-itest-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-itest-'));
+  const uploadDir = path.join(dataDir, 'files');
   const server = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, UPLOAD_DIR: uploadDir },
+    env: { ...process.env, DATA_DIR: dataDir, UPLOAD_DIR: uploadDir },
     stdio: 'ignore',
   });
-
   const fail = (msg) => { console.error('FAIL:', msg); server.kill(); process.exit(1); };
 
   try {
     await waitForHealth();
     const browser = await chromium.launch();
-    const page = await browser.newContext().then(c => c.newPage());
-    const uploads = [];
-    page.on('response', async r => { if (r.url().includes('/relay/upload')) uploads.push(r.status()); });
+
+    // --- Session 1: paste 2 images, verify no confirmation, send ---
+    const ctx1 = await browser.newContext();
+    const page = await ctx1.newPage();
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(e.message));
-
     await page.goto(`${BASE}/chat`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(500);
-
     if (pageErrors.length) fail('page init errors: ' + pageErrors.join('; '));
 
-    // Simulate clipboard image paste
-    await page.evaluate((b64) => {
-      const bin = atob(b64); const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const file = new File([bytes], 'pasted.png', { type: 'image/png' });
-      const dt = new DataTransfer(); dt.items.add(file);
-      const evt = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
-      Object.defineProperty(evt, 'clipboardData', { value: dt });
-      window.dispatchEvent(evt);
-    }, PNG_B64);
-    await page.waitForTimeout(1500);
+    await pasteImages(page, 2);
+    await page.waitForTimeout(1800);
 
-    const previewShown = await page.evaluate(() => {
-      const p = document.getElementById('preview');
-      return p && getComputedStyle(p).display === 'block';
-    });
-    if (!previewShown) fail('preview did not become visible after paste');
-    if (!uploads.includes(201)) fail('paste did not upload (no 201): ' + JSON.stringify(uploads));
+    const thumbs = await page.evaluate(() => document.querySelectorAll('#preview .thumb').length);
+    if (thumbs !== 2) fail(`expected 2 preview thumbnails, got ${thumbs}`);
 
-    // Send via the button (regression: override-after-bind lost the attachment on click)
-    await page.fill('#msg-input', 'paste integration test');
+    const hasConfirmation = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.msg')).some(m => /Image attached/i.test(m.textContent)));
+    if (hasConfirmation) fail('the "Image attached" confirmation message should be gone');
+
+    await page.fill('#msg-input', 'multi image test');
     await page.click('#send-btn');
     await page.waitForTimeout(1000);
 
-    const served = await page.evaluate(async (base) => {
+    const sent = await page.evaluate(async (base) => {
       const j = await (await fetch(base + '/relay/agent-relay')).json();
-      const withImg = j.messages.filter(m => /\[image: (\/files\/\S+)\]/.test(m.body || ''));
-      if (!withImg.length) return null;
-      const url = withImg[withImg.length - 1].body.match(/\[image: (\/files\/\S+)\]/)[1];
-      const ir = await fetch(base + url);
-      return { status: ir.status, bytes: (await ir.arrayBuffer()).byteLength, type: ir.headers.get('content-type') };
+      const m = j.messages[j.messages.length - 1];
+      const urls = (m.attachments || []).slice();
+      (m.body.match(/\[image: (\/files\/\S+)\]/g) || []).forEach(t => urls.push(t.match(/\[image: (\/files\/\S+)\]/)[1]));
+      const uniq = [...new Set(urls)];
+      const served = [];
+      for (const u of uniq) { const r = await fetch(base + u); served.push({ status: r.status, bytes: (await r.arrayBuffer()).byteLength, type: r.headers.get('content-type') }); }
+      return { id: m.id, imgCount: uniq.length, served };
     }, BASE);
 
-    if (!served) fail('sent message did not carry an image attachment');
-    if (served.status !== 200) fail('served image status ' + served.status);
-    if (served.type !== 'image/png') fail('served type ' + served.type);
-    if (served.bytes < 60) fail('served image too small (' + served.bytes + 'b) — likely a stub, not a real png');
+    if (sent.imgCount !== 2) fail(`sent message should carry 2 images, got ${sent.imgCount}`);
+    for (const s of sent.served) {
+      if (s.status !== 200 || s.type !== 'image/png' || s.bytes < 60) fail('served image invalid: ' + JSON.stringify(s));
+    }
 
-    console.log('PASS: paste -> preview -> upload 201 -> send(button) -> served', served.bytes + 'b', served.type);
+    // --- Session 2: persistence — fresh context shows the same message ---
+    const ctx2 = await browser.newContext();
+    const page2 = await ctx2.newPage();
+    await page2.goto(`${BASE}/chat`, { waitUntil: 'domcontentloaded' });
+    await page2.waitForTimeout(900);
+    const seenInFresh = await page2.evaluate((id) => !!document.querySelector(`.msg[data-id="${id}"]`), sent.id);
+    if (!seenInFresh) fail('persisted message not shown in a fresh browser context (persistence/cross-device)');
+
+    // --- Delete — remove the message, verify gone from server ---
+    await page2.evaluate((id) => document.querySelector(`.msg[data-id="${id}"] .del`).click(), sent.id);
+    await page2.waitForTimeout(800);
+    const stillOnServer = await page2.evaluate(async ({ base, id }) => {
+      const j = await (await fetch(base + '/relay/agent-relay')).json();
+      return j.messages.some(m => m.id === id);
+    }, { base: BASE, id: sent.id });
+    if (stillOnServer) fail('deleted message still present on the server');
+
+    console.log(`PASS: multi-image(${sent.imgCount}) served ${sent.served.map(s => s.bytes + 'b').join(',')}; no confirmation; persisted across context; delete removed from server`);
     await browser.close();
     server.kill();
     process.exit(0);

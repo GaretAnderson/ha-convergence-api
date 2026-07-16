@@ -1,21 +1,25 @@
 const express = require('express');
 const app = express();
 const PORT = 8088;
-const RELAY_MAX = parseInt(process.env.RELAY_MAX || '500', 10);
+const RELAY_MAX = parseInt(process.env.RELAY_MAX || '5000', 10);
 
 app.use(express.json());
 
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.4.1' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.4.3' });
 });
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
 
 const fs = require('fs');
 const crypto = require('crypto');
+const path = require('path');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/files';
+const DATA_DIR = process.env.DATA_DIR || path.dirname(UPLOAD_DIR);
+const STORE_FILE = path.join(DATA_DIR, 'relay-messages.json');
+const RETENTION_MS = parseInt(process.env.RETENTION_DAYS || '90', 10) * 86400000;
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -52,6 +56,57 @@ function getTopic(name) {
   return topics.get(name);
 }
 
+// ─── Persistence (survives restarts; 90-day retention) ───────────────────────
+
+function pruneMessages(topic) {
+  const cutoff = Date.now() - RETENTION_MS;
+  topic.messages = topic.messages.filter(m => new Date(m.timestamp).getTime() >= cutoff);
+  if (topic.messages.length > RELAY_MAX) topic.messages = topic.messages.slice(-RELAY_MAX);
+}
+
+let saveTimer = null;
+function saveStore() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      const out = {};
+      for (const [name, t] of topics) out[name] = t.messages;
+      fs.writeFileSync(STORE_FILE, JSON.stringify(out));
+    } catch (e) { console.error('[store] save failed:', e.message); }
+  }, 400);
+}
+
+function loadStore() {
+  try {
+    if (!fs.existsSync(STORE_FILE)) return;
+    const data = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
+    for (const [name, msgs] of Object.entries(data)) {
+      const t = getTopic(name);
+      t.messages = Array.isArray(msgs) ? msgs : [];
+      pruneMessages(t);
+    }
+    console.log('[store] loaded', Object.keys(data).length, 'topic(s)');
+  } catch (e) { console.error('[store] load failed:', e.message); }
+}
+
+function pruneFiles() {
+  const cutoff = Date.now() - RETENTION_MS;
+  try {
+    for (const f of fs.readdirSync(UPLOAD_DIR)) {
+      const p = path.join(UPLOAD_DIR, f);
+      try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
+loadStore();
+// Hourly maintenance: age out messages + orphaned files
+setInterval(() => {
+  for (const t of topics.values()) pruneMessages(t);
+  pruneFiles();
+  saveStore();
+}, 3600000);
+
 // POST /relay/:topic — publish a message
 app.post('/relay/:topic', (req, res) => {
   const topic = getTopic(req.params.topic);
@@ -59,15 +114,16 @@ app.post('/relay/:topic', (req, res) => {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     timestamp: new Date().toISOString(),
     from: req.body.from || 'unknown',
+    to: req.body.to || null,
     body: req.body.body || '',
+    attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
     replyTo: req.body.replyTo || null,
     metadata: req.body.metadata || {}
   };
 
   topic.messages.push(msg);
-  if (topic.messages.length > RELAY_MAX) {
-    topic.messages = topic.messages.slice(-RELAY_MAX);
-  }
+  pruneMessages(topic);
+  saveStore();
 
   // Push to SSE subscribers
   for (const sub of topic.subscribers) {
@@ -87,6 +143,20 @@ app.get('/relay/:topic', (req, res) => {
     messages = messages.filter(m => m.timestamp > since);
   }
   res.json({ topic: req.params.topic, count: messages.length, messages });
+});
+
+// DELETE /relay/:topic/:id — delete a message (notifies subscribers)
+app.delete('/relay/:topic/:id', (req, res) => {
+  const topic = getTopic(req.params.topic);
+  const before = topic.messages.length;
+  topic.messages = topic.messages.filter(m => m.id !== req.params.id);
+  if (topic.messages.length === before) return res.status(404).json({ error: 'not found' });
+  saveStore();
+  for (const sub of topic.subscribers) {
+    sub.write(`data: ${JSON.stringify({ deleted: req.params.id })}\n\n`);
+  }
+  console.log(`[relay] ${req.params.topic}: deleted ${req.params.id}`);
+  res.json({ deleted: req.params.id });
 });
 
 // GET /relay/:topic/stream — SSE subscription
@@ -135,7 +205,6 @@ app.get('/relay', (_req, res) => {
 
 // ─── Chat PWA ────────────────────────────────────────────────────────────────
 
-const path = require('path');
 app.get('/chat', (_req, res) => {
   res.sendFile(path.join(__dirname, 'chat.html'));
 });
