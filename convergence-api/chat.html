@@ -81,15 +81,15 @@ function imgTag(url) { return `<img class="att" src="${API}${url}" onclick="wind
 // Delivery-receipt state → check marks (✓ sent, ✓✓ delivered, ✓✓ teal read)
 function receiptState(msg) {
   const r = (msg && msg.receipts) || {};
-  const read = Array.isArray(r.read) && r.read.length > 0;
-  const delivered = Array.isArray(r.delivered) && r.delivered.length > 0;
-  if (read) return { mark: '✓✓', cls: 'ticks read' };
-  if (delivered) return { mark: '✓✓', cls: 'ticks' };
-  return { mark: '✓', cls: 'ticks' };
+  const read = Array.isArray(r.read) ? r.read : [];
+  const delivered = Array.isArray(r.delivered) ? r.delivered : [];
+  if (read.length) return { mark: '✓✓', cls: 'ticks read', title: 'Read by ' + read.join(', ') };
+  if (delivered.length) return { mark: '✓✓', cls: 'ticks', title: 'Delivered to ' + delivered.join(', ') };
+  return { mark: '✓', cls: 'ticks', title: 'Sent' };
 }
 function ticksSpan(msg) {
   const s = receiptState(msg);
-  return `<span class="${s.cls}" data-ticks="${msg.id}" title="delivery status">${s.mark}</span>`;
+  return `<span class="${s.cls}" data-ticks="${msg.id}" title="${escapeHtml(s.title)}">${s.mark}</span>`;
 }
 function updateTicks(id, receipts) {
   const el = document.querySelector(`[data-ticks="${id}"]`);
@@ -97,6 +97,7 @@ function updateTicks(id, receipts) {
   const s = receiptState({ receipts });
   el.className = s.cls;
   el.textContent = s.mark;
+  el.title = s.title;
 }
 
 let pendingAttachments = [];   // staged upload URLs for the next message
