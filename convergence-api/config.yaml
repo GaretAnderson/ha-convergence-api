@@ -1,10 +1,10 @@
 name: "Convergence API"
 description: "Always-on API for agent relay, thread board, and pipeline status. Provides real-time cross-machine agent messaging via SSE."
-version: "0.6.0"
+version: "0.6.1"
 slug: "convergence_api"
 init: false
 ingress: true
-ingress_port: 8088
+ingress_port: 8099
 panel_icon: "mdi:chat"
 panel_title: "Agent Chat"
 arch:

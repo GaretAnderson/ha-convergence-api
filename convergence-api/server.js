@@ -1,6 +1,10 @@
 const express = require('express');
 const app = express();
 const PORT = 8088;
+// Ingress uses a separate internal port so the published relay port (8088, used
+// by CLI tools + HA rest_command) doesn't collide with ingress_port — that
+// collision breaks HA sidebar-panel injection.
+const INGRESS_PORT = parseInt(process.env.INGRESS_PORT || '8099', 10);
 const RELAY_MAX = parseInt(process.env.RELAY_MAX || '5000', 10);
 
 app.use(express.json());
@@ -8,7 +12,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.6.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.6.1' });
 });
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
@@ -249,3 +253,11 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  /relay/:topic/stream — SSE subscribe`);
   console.log(`  Relay max messages per topic: ${RELAY_MAX}`);
 });
+
+// Second listener for Home Assistant ingress (sidebar panel). Same app, distinct
+// internal port so it doesn't collide with the published relay port.
+if (INGRESS_PORT && INGRESS_PORT !== PORT) {
+  app.listen(INGRESS_PORT, '0.0.0.0', () => {
+    console.log(`Ingress (HA sidebar) listening on port ${INGRESS_PORT}`);
+  });
+}
