@@ -12,7 +12,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.6.1' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.6.2' });
 });
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
