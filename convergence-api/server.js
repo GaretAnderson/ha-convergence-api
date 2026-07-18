@@ -12,7 +12,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.6.3' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.7.0' });
 });
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
@@ -140,14 +140,30 @@ app.post('/relay/:topic', (req, res) => {
 });
 
 // GET /relay/:topic — poll recent messages
+// Query params:
+//   since=<ISO>   — messages strictly newer than this (responder polling; unpaged)
+//   before=<id>   — only messages older than the message with this id (page back)
+//   limit=<n>     — return at most the newest n of the (filtered) set
+// Response includes `hasMore` = older messages exist beyond the returned window.
 app.get('/relay/:topic', (req, res) => {
   const topic = getTopic(req.params.topic);
-  const since = req.query.since; // ISO timestamp filter
+  const { since, before } = req.query;
+  const limit = req.query.limit ? Math.max(1, parseInt(req.query.limit, 10) || 0) : 0;
+
   let messages = topic.messages;
-  if (since) {
-    messages = messages.filter(m => m.timestamp > since);
+  if (since) messages = messages.filter(m => m.timestamp > since);
+  if (before) {
+    const idx = messages.findIndex(m => m.id === before);
+    if (idx >= 0) messages = messages.slice(0, idx);
   }
-  res.json({ topic: req.params.topic, count: messages.length, messages });
+
+  let hasMore = false;
+  if (limit && messages.length > limit) {
+    hasMore = true;
+    messages = messages.slice(-limit);
+  }
+
+  res.json({ topic: req.params.topic, count: messages.length, messages, hasMore });
 });
 
 // DELETE /relay/:topic/:id — delete a message (notifies subscribers)

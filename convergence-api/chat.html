@@ -37,6 +37,15 @@ header .status { font-size: 12px; color: #4ecca3; }
 .addressing { padding: 8px 16px; background: #0f3460; display: flex; gap: 6px; overflow-x: auto; }
 .addressing button { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .addressing button.active { background: #4ecca3; color: #1a1a2e; }
+/* Paged history: top loader, jump-to-latest pill, subtle message entrance */
+.load-older { align-self: center; padding: 10px 0; display: flex; }
+.spinner { width: 18px; height: 18px; border: 2px solid #0f3460; border-top-color: #4ecca3; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.history-start { align-self: center; color: #556; font-size: 11px; padding: 8px 0 2px; letter-spacing: .3px; }
+.msg { animation: msgin .18s ease-out; }
+@keyframes msgin { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+#jump-latest { position: absolute; right: 16px; bottom: 78px; background: #4ecca3; color: #1a1a2e; border: none; border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.4); opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 5; }
+#jump-latest.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
 </style>
 </head>
 <body>
@@ -50,6 +59,7 @@ header .status { font-size: 12px; color: #4ecca3; }
   <button data-to="@all">@all</button>
 </div>
 <div id="messages"></div>
+<button id="jump-latest">↓ Latest</button>
 <div id="preview"></div>
 <div id="input-bar">
   <input type="file" id="file-input" accept="image/*" style="display:none">
@@ -102,9 +112,27 @@ function updateTicks(id, receipts) {
 
 let pendingAttachments = [];   // staged upload URLs for the next message
 const seen = new Set();        // rendered message ids (dedup across SSE + history)
+const PAGE = 30;               // messages per page
+let oldestId = null;           // paging cursor: id of the oldest loaded message
+let hasMore = true;            // older messages exist on the server
+let loadingOlder = false;
 
-function renderMessage(msg) {
-  if (!msg || !msg.id || seen.has(msg.id)) return;
+const msgsEl = () => document.getElementById('messages');
+function isNearBottom(px = 120) {
+  const el = msgsEl();
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= px;
+}
+function scrollToBottom(instant) {
+  const el = msgsEl();
+  el.scrollTo({ top: el.scrollHeight, behavior: instant ? 'auto' : 'smooth' });
+  hideJumpPill();
+}
+function showJumpPill() { document.getElementById('jump-latest').classList.add('show'); }
+function hideJumpPill() { document.getElementById('jump-latest').classList.remove('show'); }
+
+// Build a message element (no insertion). Returns null if already rendered.
+function buildMessageEl(msg) {
+  if (!msg || !msg.id || seen.has(msg.id)) return null;
   seen.add(msg.id);
   const sent = msg.from === 'phone';
   const div = document.createElement('div');
@@ -126,9 +154,21 @@ function renderMessage(msg) {
     `<div class="time">${time}${sent ? ticksSpan(msg) : ''}</div>` +
     `<button class="del" title="Delete message">&times;</button>`;
   div.querySelector('.del').addEventListener('click', () => deleteMessage(msg.id));
-  document.getElementById('messages').appendChild(div);
-  div.scrollIntoView({ behavior: 'smooth' });
+  return div;
 }
+
+// Append a new/live message at the bottom. Auto-follows only if the user is
+// already near the bottom (or sent it themselves); otherwise nudges the pill.
+function appendMessage(msg) {
+  const div = buildMessageEl(msg);
+  if (!div) return;
+  const follow = isNearBottom() || msg.from === 'phone';
+  msgsEl().appendChild(div);
+  if (follow) scrollToBottom(true); else showJumpPill();
+}
+
+// Back-compat alias (used by send() and the SSE stream).
+function renderMessage(msg) { appendMessage(msg); }
 
 function removeMessageEl(id) {
   const el = document.querySelector(`.msg[data-id="${id}"]`);
@@ -147,8 +187,8 @@ function addSystem(text) {
   const div = document.createElement('div');
   div.className = 'msg received';
   div.innerHTML = `<span class="text">${escapeHtml(text)}</span>`;
-  document.getElementById('messages').appendChild(div);
-  div.scrollIntoView({ behavior: 'smooth' });
+  msgsEl().appendChild(div);
+  scrollToBottom(true);
 }
 
 async function send() {
@@ -195,11 +235,70 @@ function connect() {
 }
 connect();
 
-// Load full persisted history (all senders) so refresh / another device shows the same content
-fetch(`${API}/relay/${TOPIC}`)
-  .then(r => r.json())
-  .then(data => (data.messages || []).forEach(renderMessage))
-  .catch(() => {});
+// Paged history — load the newest page anchored to the bottom, then lazily
+// load older messages as the user scrolls up (view position preserved, no jump).
+function topSpinner(show) {
+  let sp = document.getElementById('load-older');
+  if (show && !sp) {
+    sp = document.createElement('div');
+    sp.id = 'load-older'; sp.className = 'load-older';
+    sp.innerHTML = '<span class="spinner"></span>';
+    msgsEl().prepend(sp);
+  } else if (!show && sp) { sp.remove(); }
+}
+function markHistoryStart() {
+  if (document.getElementById('history-start')) return;
+  const s = document.createElement('div');
+  s.id = 'history-start'; s.className = 'history-start';
+  s.textContent = '— beginning of conversation —';
+  msgsEl().prepend(s);
+}
+
+async function loadOlder() {
+  if (loadingOlder || !hasMore || !oldestId) return;
+  loadingOlder = true;
+  topSpinner(true);
+  const el = msgsEl();
+  const prevH = el.scrollHeight, prevT = el.scrollTop;
+  try {
+    const data = await fetch(`${API}/relay/${TOPIC}?before=${encodeURIComponent(oldestId)}&limit=${PAGE}`).then(r => r.json());
+    const msgs = data.messages || [];
+    hasMore = !!data.hasMore;
+    topSpinner(false);
+    if (msgs.length) {
+      oldestId = msgs[0].id;
+      const frag = document.createDocumentFragment();
+      for (const m of msgs) { const b = buildMessageEl(m); if (b) frag.appendChild(b); }
+      el.insertBefore(frag, el.firstChild);
+      el.scrollTop = prevT + (el.scrollHeight - prevH); // preserve the reading position
+    }
+    if (!hasMore) markHistoryStart();
+  } catch { topSpinner(false); }
+  loadingOlder = false;
+}
+
+async function loadInitial() {
+  try {
+    const data = await fetch(`${API}/relay/${TOPIC}?limit=${PAGE}`).then(r => r.json());
+    const msgs = data.messages || [];
+    hasMore = !!data.hasMore;
+    if (msgs.length) oldestId = msgs[0].id;
+    const frag = document.createDocumentFragment();
+    for (const m of msgs) { const b = buildMessageEl(m); if (b) frag.appendChild(b); }
+    msgsEl().appendChild(frag);
+    scrollToBottom(true);
+    if (!hasMore) markHistoryStart();
+  } catch {}
+}
+
+// Lazy-load trigger + pill visibility.
+msgsEl().addEventListener('scroll', () => {
+  if (msgsEl().scrollTop < 240) loadOlder();
+  if (isNearBottom()) hideJumpPill();
+});
+document.getElementById('jump-latest').addEventListener('click', () => scrollToBottom(false));
+
+loadInitial();
 
 // Image attachments — paste, drop, or file picker; supports multiple per message
 async function uploadImage(file) {
@@ -246,9 +345,9 @@ window.addEventListener('paste', async (e) => {
   if (handled) e.preventDefault();
 });
 
-const msgsEl = document.getElementById('messages');
-msgsEl.addEventListener('dragover', (e) => e.preventDefault());
-msgsEl.addEventListener('drop', async (e) => {
+const dropZone = msgsEl();
+dropZone.addEventListener('dragover', (e) => e.preventDefault());
+dropZone.addEventListener('drop', async (e) => {
   e.preventDefault();
   for (const f of Array.from(e.dataTransfer.files)) await stageImage(f);
 });
