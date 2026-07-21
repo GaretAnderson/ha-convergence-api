@@ -2,6 +2,9 @@
   "name": "convergence-api",
   "version": "0.1.0",
   "private": true,
+  "scripts": {
+    "test:unit": "node tests/receipts.unit.js"
+  },
   "dependencies": {
     "express": "^4.21.0"
   }
