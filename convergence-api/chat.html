@@ -36,7 +36,7 @@ header .status { font-size: 12px; color: #4ecca3; }
 #input-bar input:focus { border-color: #4ecca3; }
 #input-bar button { padding: 10px 18px; border-radius: 20px; border: none; background: #4ecca3; color: #1a1a2e; font-weight: 600; font-size: 14px; cursor: pointer; }
 #input-bar button:active { opacity: 0.8; }
-.addressing { padding: 8px 16px; background: #0f3460; display: flex; gap: 6px; overflow-x: auto; }
+.addressing { padding: 8px 16px; background: #0f3460; display: flex; gap: 6px; overflow-x: auto; border-top: 1px solid #16213e; }
 .addressing button { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .addressing button.active { background: #4ecca3; color: #1a1a2e; }
 /* Paged history: top loader, jump-to-latest pill, subtle message entrance */
@@ -46,7 +46,7 @@ header .status { font-size: 12px; color: #4ecca3; }
 .history-start { align-self: center; color: #556; font-size: 11px; padding: 8px 0 2px; letter-spacing: .3px; }
 .msg { animation: msgin .18s ease-out; }
 @keyframes msgin { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-#jump-latest { position: absolute; right: 16px; bottom: 78px; background: #4ecca3; color: #1a1a2e; border: none; border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.4); opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 5; }
+#jump-latest { position: absolute; right: 16px; bottom: 118px; background: #4ecca3; color: #1a1a2e; border: none; border-radius: 20px; padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.4); opacity: 0; transform: translateY(10px); pointer-events: none; transition: opacity .2s ease, transform .2s ease; z-index: 5; }
 #jump-latest.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
 </style>
 </head>
@@ -55,13 +55,13 @@ header .status { font-size: 12px; color: #4ecca3; }
   <h1>Agent Chat</h1>
   <span class="status" id="status">connecting...</span>
 </header>
+<div id="messages"></div>
+<button id="jump-latest">↓ Latest</button>
 <div class="addressing">
   <button class="active" data-to="@aorus">@aorus</button>
   <button data-to="@laptop">@laptop</button>
   <button data-to="@all">@all</button>
 </div>
-<div id="messages"></div>
-<button id="jump-latest">↓ Latest</button>
 <div id="preview"></div>
 <div id="input-bar">
   <input type="file" id="file-input" accept="image/*" style="display:none">
