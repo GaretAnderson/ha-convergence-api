@@ -20,8 +20,10 @@ function mockRes() {
   return {
     statusCode: null,
     body: null,
+    headers: {},
     status(code) { this.statusCode = code; return this; },
-    json(body) { this.body = body; return this; }
+    json(body) { this.body = body; return this; },
+    set(name, value) { this.headers[name] = value; return this; }
   };
 }
 
@@ -91,6 +93,59 @@ test('requireRelayAuth rejects (401) an incorrect token', () => {
   assert.equal(res.statusCode, 401);
 });
 
+test('requireRelayAuth 401 responses include WWW-Authenticate + remediation guidance', () => {
+  const middleware = createRelayAuthMiddleware(() => 'the-secret');
+  const req = mockReq();
+  const res = mockRes();
+  middleware(req, res, () => {});
+  assert.equal(res.statusCode, 401);
+  assert.match(res.headers['WWW-Authenticate'], /Bearer/);
+  assert.ok(res.body.hint, 'expected a remediation hint in the 401 body');
+});
+
+test('requireRelayAuth grace window: allows an unauthenticated request through before it expires', () => {
+  const graceUntil = Date.now() + 60000;
+  const middleware = createRelayAuthMiddleware(() => 'the-secret', { graceUntil: () => graceUntil });
+  const req = mockReq();
+  const res = mockRes();
+  let nextCalled = false;
+  middleware(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(res.headers['X-Relay-Auth-Grace'], 'active');
+});
+
+test('requireRelayAuth grace window: still rejects once it has expired', () => {
+  const graceUntil = Date.now() - 1000; // already expired
+  const middleware = createRelayAuthMiddleware(() => 'the-secret', { graceUntil: () => graceUntil });
+  const req = mockReq();
+  const res = mockRes();
+  let nextCalled = false;
+  middleware(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 401);
+});
+
+test('requireRelayAuth grace window: a valid token still bypasses the grace path entirely', () => {
+  const graceUntil = Date.now() + 60000;
+  const middleware = createRelayAuthMiddleware(() => 'the-secret', { graceUntil: () => graceUntil });
+  const req = mockReq({ authorization: 'Bearer the-secret' });
+  const res = mockRes();
+  let nextCalled = false;
+  middleware(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(res.headers['X-Relay-Auth-Grace'], undefined);
+});
+
+test('requireRelayAuth still fails closed (503) when no token is configured, even with a grace window set', () => {
+  const graceUntil = Date.now() + 60000;
+  const middleware = createRelayAuthMiddleware(() => '', { graceUntil: () => graceUntil });
+  const req = mockReq();
+  const res = mockRes();
+  let nextCalled = false;
+  middleware(req, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 503);
+});
 test('requireRelayAuth calls next() for a valid Authorization header token', () => {
   const middleware = createRelayAuthMiddleware(() => 'the-secret');
   const req = mockReq({ authorization: 'Bearer the-secret' });

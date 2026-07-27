@@ -1,5 +1,5 @@
 const express = require('express');
-const { renderMessageHtml } = require('./render.js');
+const { renderMessageHtml, isSafeAttachmentUrl } = require('./render.js');
 const { normalizeRecipients } = require('./addressing.js');
 const { createRelayAuthMiddleware } = require('./auth.js');
 const app = express();
@@ -10,6 +10,19 @@ const PORT = 8188;
 const INGRESS_PORT = parseInt(process.env.INGRESS_PORT || '8099', 10);
 const RELAY_MAX = parseInt(process.env.RELAY_MAX || '5000', 10);
 const RELAY_TOKEN = (process.env.RELAY_TOKEN || '').trim();
+// Deploy-order transition (issue #31 review): when an operator sets
+// relay_token for the first time (or rotates it) on a previously-open/older
+// deployment, existing clients and the phone UI (which hasn't prompted for +
+// stored a token yet) shouldn't be hard-401'd the instant the add-on
+// restarts. `relay_token_grace_hours` (default 24, 0 disables) gives a
+// bounded window — counted from THIS process start — during which requests
+// without a valid token are still accepted (and logged) so the rollout can
+// happen without a lockout. It never weakens the fails-closed guarantee: an
+// unset relay_token still always 503s regardless of grace.
+const RELAY_TOKEN_GRACE_HOURS = parseFloat(process.env.RELAY_TOKEN_GRACE_HOURS || '24');
+const relayAuthGraceUntil = (RELAY_TOKEN && RELAY_TOKEN_GRACE_HOURS > 0)
+  ? Date.now() + RELAY_TOKEN_GRACE_HOURS * 3600000
+  : 0;
 
 app.use(express.json());
 
@@ -18,7 +31,7 @@ app.use(express.json());
 // reach it without a token.
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.8.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.8.1' });
 });
 
 // ─── Auth (issue #29 / #24, homeassistant#70) ───────────────────────────────
@@ -28,10 +41,18 @@ app.get('/api/health', (_req, res) => {
 // extraction/comparison logic (Authorization: Bearer header, or ?token= query
 // param for browser EventSource/SSE and the phone-UI chat page). Fails
 // CLOSED: unset relay_token rejects every /relay* and /files/* request.
-const requireRelayAuth = createRelayAuthMiddleware(() => RELAY_TOKEN);
+const requireRelayAuth = createRelayAuthMiddleware(() => RELAY_TOKEN, {
+  graceUntil: () => relayAuthGraceUntil
+});
 
 if (!RELAY_TOKEN) {
   console.warn('[relay] WARNING: relay_token is not set — all /relay and /files requests will be rejected (401/503) until it is configured.');
+} else if (relayAuthGraceUntil) {
+  console.warn(
+    `[relay] NOTE: relay_token auth transition grace window active until ${new Date(relayAuthGraceUntil).toISOString()} ` +
+    `(relay_token_grace_hours=${RELAY_TOKEN_GRACE_HOURS}) — requests without a valid token are still allowed through ` +
+    `and logged during this window. Set relay_token_grace_hours: 0 to disable.`
+  );
 }
 
 app.use('/relay', requireRelayAuth);
@@ -150,7 +171,15 @@ app.post('/relay/:topic', (req, res) => {
     // Computed once at publish time so every consumer (poll, SSE, /chat)
     // gets identical rendering without re-parsing markdown client-side.
     bodyHtml: renderMessageHtml(body),
-    attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
+    // Defense in depth against the `attachments` array XSS path (issue #31
+    // review): the client also validates before rendering (chat.html
+    // imgTag()), but never trust the client — filter to the same
+    // http(s)/root-relative allowlist here so a malicious/buggy sender can
+    // never persist a javascript:/data: (or anything else) attachment URL in
+    // the first place.
+    attachments: Array.isArray(req.body.attachments)
+      ? req.body.attachments.filter(isSafeAttachmentUrl)
+      : [],
     replyTo: req.body.replyTo || null,
     metadata: req.body.metadata || {},
     receipts: { delivered: [], read: [] }

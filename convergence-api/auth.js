@@ -42,19 +42,57 @@ function extractToken(req) {
 // Fails CLOSED: if no token is configured, every request is rejected (503)
 // rather than the relay silently running open — a fresh/misconfigured
 // install can never reproduce the original unauthenticated exposure.
-function createRelayAuthMiddleware(getToken) {
+//
+// Deploy-order transition (issue #31 review): once a token IS configured,
+// old/existing clients that haven't been updated to send it yet (and a phone
+// UI that hasn't prompted+stored a token on first load) would otherwise be
+// hard-401'd the instant the operator sets `relay_token`, before they've had
+// a chance to roll out client-side support. `options.graceUntil()` — an
+// epoch-ms deadline supplied by the caller (see server.js's
+// `relay_token_grace_hours` option) — lets unauthenticated/invalid-token
+// requests through *for a bounded window* instead, logging each one so the
+// grace window's real usage is visible and the operator knows when it's
+// safe to let it lapse. After the deadline (or if no grace window is
+// configured), enforcement is strict again. This never weakens the
+// fails-closed guarantee above — an unset token still always 503s.
+function createRelayAuthMiddleware(getToken, options = {}) {
+  const graceUntilFn = typeof options.graceUntil === 'function'
+    ? options.graceUntil
+    : () => options.graceUntil || 0;
+
   return function requireRelayAuth(req, res, next) {
     const token = typeof getToken === 'function' ? getToken() : getToken;
     if (!token) {
       res.status(503).json({ error: 'relay auth not configured — set the relay_token add-on option' });
       return;
     }
+
     const supplied = extractToken(req);
-    if (!supplied || !timingSafeEqualStr(supplied, token)) {
-      res.status(401).json({ error: 'unauthorized — missing or invalid relay token' });
+    if (supplied && timingSafeEqualStr(supplied, token)) {
+      next();
       return;
     }
-    next();
+
+    const graceUntil = graceUntilFn();
+    if (graceUntil && Date.now() < graceUntil) {
+      console.warn(
+        `[relay] WARNING: allowing request without a valid token through the auth transition grace window ` +
+        `(expires ${new Date(graceUntil).toISOString()}) — ${req.method} ${req.originalUrl || req.url}`
+      );
+      res.set('X-Relay-Auth-Grace', 'active');
+      next();
+      return;
+    }
+
+    // Clear 401 with remediation guidance rather than a bare rejection, so
+    // stuck clients/operators know exactly how to fix it.
+    res.set('WWW-Authenticate', 'Bearer realm="agent-relay"');
+    res.status(401).json({
+      error: 'unauthorized — missing or invalid relay token',
+      hint:
+        'Send Authorization: Bearer <token> (CLI/PowerShell clients) or ?token=<token> ' +
+        '(browser/SSE/<img> requests). In the chat UI, set/update the token via the 🔑 button.'
+    });
   };
 }
 

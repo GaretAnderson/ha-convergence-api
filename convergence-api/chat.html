@@ -135,9 +135,43 @@ document.querySelectorAll('.addressing button').forEach(btn => {
 });
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function imgTag(url) {
-  const src = authQS(API + url);
-  return `<img class="att" src="${src}" onclick="window.open('${src}')">`;
+
+// Attachment URL allowlist (issue #31 review — XSS via the `attachments[]`
+// array): only http(s) absolute URLs or root-relative `/files/...` paths are
+// ever turned into an <img>. Kept in sync with render.js's
+// isSafeAttachmentUrl (server-side), which also filters this array at
+// publish time — this is defense in depth for the client render path itself.
+// javascript:/data:/vbscript:/protocol-relative/bare-relative URLs, and
+// anything with control characters, are rejected outright.
+function isSafeAttachmentUrl(url) {
+  const str = String(url || '').trim();
+  if (!str) return false;
+  if (/[\u0000-\u001f\u007f]/.test(str)) return false;
+  if (str.startsWith('/') && !str.startsWith('//')) return true;
+  try {
+    const parsed = new URL(str);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// Builds an attachment <img> element via DOM APIs (property assignment, not
+// string-concatenated HTML/inline `onclick`) so an attachment URL can never
+// break out of an attribute or inline-script context — only the allowlisted
+// URL string itself ever reaches `src`. Returns null if the URL is rejected.
+function buildAttachmentImg(url) {
+  if (!isSafeAttachmentUrl(url)) return null;
+  const str = String(url).trim();
+  const rootRelative = str.startsWith('/') && !str.startsWith('//');
+  const src = rootRelative ? authQS(API + str) : str;
+  const img = document.createElement('img');
+  img.className = 'att';
+  img.src = src;
+  img.alt = 'attachment';
+  img.loading = 'lazy';
+  img.addEventListener('click', () => window.open(src, '_blank', 'noopener'));
+  return img;
 }
 
 // Delivery receipts → per-recipient colored names inline (teal = read, grey =
@@ -219,9 +253,18 @@ function buildMessageEl(msg) {
   div.innerHTML =
     (sent ? '' : `<div class="from">${escapeHtml(msg.from)}</div>`) +
     (bodyHtml ? `<div class="text">${bodyHtml}</div>` : '') +
-    urls.map(imgTag).join('') +
     `<div class="time">${time}${sent ? ticksSpan(msg) : ''}</div>` +
     `<button class="del" title="Delete message">&times;</button>`;
+
+  // Attachments are inserted as real DOM elements (buildAttachmentImg), not
+  // string-concatenated HTML, and placed before the time/delete row that
+  // .innerHTML above just created.
+  const timeEl = div.querySelector('.time');
+  for (const u of urls) {
+    const img = buildAttachmentImg(u);
+    if (img) div.insertBefore(img, timeEl);
+  }
+
   div.querySelector('.del').addEventListener('click', () => deleteMessage(msg.id));
   return div;
 }

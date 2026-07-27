@@ -44,6 +44,20 @@ request is rejected (`401`/`503`) rather than the relay silently running
 open — a fresh or misconfigured install can never reproduce the
 unauthenticated exposure this fixes (issue #24 / #29).
 
+**Deploy-order transition (no client lockout):** the first time `relay_token`
+is set (or rotated) on a running deployment, older/not-yet-updated clients
+that don't send a token yet would otherwise be hard-401'd the instant the
+add-on restarts. `relay_token_grace_hours` (default **24**, `0` disables)
+gives a bounded window — counted from the add-on's process start — during
+which requests without a valid token are still let through (each one logged
+with a `[relay] WARNING`, and marked with an `X-Relay-Auth-Grace: active`
+response header) so the rollout can happen without locking anyone out. This
+never weakens the fails-closed guarantee above: an unset `relay_token` still
+always `503`s regardless of the grace window. Once the window lapses (or with
+it disabled), missing/invalid tokens get a clear `401` with a
+`WWW-Authenticate: Bearer` header and a `hint` field in the JSON body
+explaining exactly how to authenticate.
+
 **Phone/browser UI token path (no lockout):** the `/chat` page itself loads
 without a token, then prompts once for the relay token and stores it in the
 browser's `localStorage` (key `agentChatRelayToken`) so it isn't asked again.
@@ -117,14 +131,16 @@ curl -H "Authorization: Bearer $RELAY_TOKEN" "http://homeassistant.local:8188/re
 | `cards_repo` | `GaretAnderson/thread-board-cards` | Thread board cards repo |
 | `relay_max_messages` | 500 | Max messages retained per topic |
 | `relay_token` | (empty) | Shared secret required on every `/relay*`/`/files/*` request. **Must be set** — the relay fails closed if empty. |
+| `relay_token_grace_hours` | 24 | Hours after add-on start during which requests without a valid token are still let through (logged) once `relay_token` is set, so a rollout doesn't lock out old clients. `0` disables the grace window. |
 
 ## Testing
 
 ```bash
 npm ci
-npm test              # unit tests (receipts, addressing, auth) + render.js sanitization tests
+npm test              # unit tests (receipts, addressing, auth incl. grace-window) + render.js sanitization tests
 npx playwright install chromium
-node tests/paste.integration.js   # end-to-end: paste/upload/send/persist/delete, with auth
+node tests/paste.integration.js              # end-to-end: paste/upload/send/persist/delete, with auth
+node tests/attachment-xss.integration.js     # end-to-end: attachments[] XSS probe (javascript:/data:/attribute-breakout)
 ```
 
 ## Port
