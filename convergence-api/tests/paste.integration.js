@@ -15,7 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
-const PORT = 8088;
+const PORT = 8188;
 const BASE = `http://localhost:${PORT}`;
 // Real 1x1 PNG (67 bytes) — unlike an 8-byte stub, this decodes in a browser.
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';

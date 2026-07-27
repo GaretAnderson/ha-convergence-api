@@ -21,20 +21,20 @@ In-memory pub/sub. Topics created on first use. Messages capped at 50 per topic 
 
 ### Publish
 ```bash
-curl -X POST http://homeassistant.local:8088/relay/agent-relay \
+curl -X POST http://homeassistant.local:8188/relay/agent-relay \
   -H "Content-Type: application/json" \
   -d '{"from":"garets-copilot@AORUS","body":"What is the SubstrateBE refresh schedule?","replyTo":"reply-abc123"}'
 ```
 
 ### Subscribe (SSE)
 ```bash
-curl -N http://homeassistant.local:8088/relay/agent-relay/stream
+curl -N http://homeassistant.local:8188/relay/agent-relay/stream
 ```
 
 ### Poll
 ```bash
-curl http://homeassistant.local:8088/relay/agent-relay
-curl http://homeassistant.local:8088/relay/agent-relay?since=2026-07-13T12:00:00Z
+curl http://homeassistant.local:8188/relay/agent-relay
+curl http://homeassistant.local:8188/relay/agent-relay?since=2026-07-13T12:00:00Z
 ```
 
 ## Configuration
@@ -47,4 +47,4 @@ curl http://homeassistant.local:8088/relay/agent-relay?since=2026-07-13T12:00:00
 
 ## Port
 
-Listens on **8088** (configurable in config.yaml).
+Listens on **8188** (configurable in config.yaml).
