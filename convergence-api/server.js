@@ -1,4 +1,7 @@
 const express = require('express');
+const { renderMessageHtml } = require('./render.js');
+const { normalizeRecipients } = require('./addressing.js');
+const { createRelayAuthMiddleware } = require('./auth.js');
 const app = express();
 const PORT = 8188;
 // Ingress uses a separate internal port so the published relay port (8188, used
@@ -6,14 +9,33 @@ const PORT = 8188;
 // collision breaks HA sidebar-panel injection.
 const INGRESS_PORT = parseInt(process.env.INGRESS_PORT || '8099', 10);
 const RELAY_MAX = parseInt(process.env.RELAY_MAX || '5000', 10);
+const RELAY_TOKEN = (process.env.RELAY_TOKEN || '').trim();
 
 app.use(express.json());
 
 // ─── Health ──────────────────────────────────────────────────────────────────
+// Deliberately unauthenticated — no sensitive data, and monitoring needs to
+// reach it without a token.
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.7.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.8.0' });
 });
+
+// ─── Auth (issue #29 / #24, homeassistant#70) ───────────────────────────────
+// Shared-secret auth for the relay. The token lives in the add-on's
+// `relay_token` option (set via the HA UI, stored in HA's supervisor config —
+// never in git) and is passed in as RELAY_TOKEN. See auth.js for the token
+// extraction/comparison logic (Authorization: Bearer header, or ?token= query
+// param for browser EventSource/SSE and the phone-UI chat page). Fails
+// CLOSED: unset relay_token rejects every /relay* and /files/* request.
+const requireRelayAuth = createRelayAuthMiddleware(() => RELAY_TOKEN);
+
+if (!RELAY_TOKEN) {
+  console.warn('[relay] WARNING: relay_token is not set — all /relay and /files requests will be rejected (401/503) until it is configured.');
+}
+
+app.use('/relay', requireRelayAuth);
+app.use('/files', requireRelayAuth);
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
 
@@ -114,12 +136,20 @@ setInterval(() => {
 // POST /relay/:topic — publish a message
 app.post('/relay/:topic', (req, res) => {
   const topic = getTopic(req.params.topic);
+  const body = req.body.body || '';
   const msg = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     timestamp: new Date().toISOString(),
     from: req.body.from || 'unknown',
-    to: req.body.to || null,
-    body: req.body.body || '',
+    // Multi-recipient addressing (garets-config#901 Phase 1): `to` is a
+    // string array of handles. A single string is still accepted from
+    // legacy senders and normalized to a one-element array. No `@all`.
+    to: normalizeRecipients(req.body.to),
+    body,
+    // Sanitized markdown rendering of `body`, safe to insert via innerHTML.
+    // Computed once at publish time so every consumer (poll, SSE, /chat)
+    // gets identical rendering without re-parsing markdown client-side.
+    bodyHtml: renderMessageHtml(body),
     attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
     replyTo: req.body.replyTo || null,
     metadata: req.body.metadata || {},
@@ -264,10 +294,13 @@ app.get('/', (_req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Convergence API listening on port ${PORT}`);
-  console.log(`  /api/health       — health check`);
-  console.log(`  /relay/:topic     — publish (POST) / poll (GET)`);
-  console.log(`  /relay/:topic/stream — SSE subscribe`);
+  console.log(`  /api/health       — health check (unauthenticated)`);
+  console.log(`  /relay/:topic     — publish (POST) / poll (GET) [auth required]`);
+  console.log(`  /relay/:topic/stream — SSE subscribe [auth required]`);
+  console.log(`  /files/:filename  — serve uploaded attachments [auth required]`);
+  console.log(`  /chat             — Agent Chat web UI (renders markdown, multi-recipient composer)`);
   console.log(`  Relay max messages per topic: ${RELAY_MAX}`);
+  console.log(`  Relay auth: ${RELAY_TOKEN ? 'enabled' : 'DISABLED (no relay_token set — requests will be rejected)'}`);
 });
 
 // Second listener for Home Assistant ingress (sidebar panel). Same app, distinct

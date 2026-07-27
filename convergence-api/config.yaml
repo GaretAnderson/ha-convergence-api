@@ -1,6 +1,6 @@
 name: "Convergence API"
 description: "Always-on API for agent relay, thread board, and pipeline status. Provides real-time cross-machine agent messaging via SSE."
-version: "0.7.2"
+version: "0.8.0"
 slug: "convergence_api"
 init: false
 ingress: true
@@ -18,7 +18,9 @@ options:
   github_token: ""
   cards_repo: "GaretAnderson/thread-board-cards"
   relay_max_messages: 500
+  relay_token: ""
 schema:
   github_token: str
   cards_repo: str
   relay_max_messages: int
+  relay_token: password

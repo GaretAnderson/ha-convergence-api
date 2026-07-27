@@ -4,8 +4,13 @@ set -e
 GITHUB_TOKEN=$(jq -r '.github_token // empty' /data/options.json)
 CARDS_REPO=$(jq -r '.cards_repo // "GaretAnderson/thread-board-cards"' /data/options.json)
 RELAY_MAX=$(jq -r '.relay_max_messages // 50' /data/options.json)
+RELAY_TOKEN=$(jq -r '.relay_token // empty' /data/options.json)
 
-export GITHUB_TOKEN CARDS_REPO RELAY_MAX
+export GITHUB_TOKEN CARDS_REPO RELAY_MAX RELAY_TOKEN
+
+if [ -z "${RELAY_TOKEN}" ]; then
+  echo "[convergence-api] WARNING: relay_token option is not set — the relay will reject all /relay and /files requests until it is configured."
+fi
 
 cd /app
 echo "[convergence-api] Starting on port 8188 (relay max: ${RELAY_MAX})"
