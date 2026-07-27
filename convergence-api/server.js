@@ -1,7 +1,7 @@
 const express = require('express');
 const app = express();
-const PORT = 8088;
-// Ingress uses a separate internal port so the published relay port (8088, used
+const PORT = 8188;
+// Ingress uses a separate internal port so the published relay port (8188, used
 // by CLI tools + HA rest_command) doesn't collide with ingress_port — that
 // collision breaks HA sidebar-panel injection.
 const INGRESS_PORT = parseInt(process.env.INGRESS_PORT || '8099', 10);
