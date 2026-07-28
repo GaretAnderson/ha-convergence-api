@@ -15,14 +15,8 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 
-const PORT = 8188;
+const PORT = 8088;
 const BASE = `http://localhost:${PORT}`;
-// Auth (issue #29): the relay now requires a shared-secret token on every
-// /relay* and /files/* request. Use a throwaway token for this test server
-// and pre-seed it into each browser context's localStorage (matching the
-// chat.html TOKEN_KEY) so the page doesn't block on a JS `prompt()` dialog.
-const TEST_TOKEN = 'integration-test-token';
-const TOKEN_KEY = 'agentChatRelayToken';
 // Real 1x1 PNG (67 bytes) — unlike an 8-byte stub, this decodes in a browser.
 const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
@@ -56,7 +50,7 @@ async function pasteImages(page, n) {
   const uploadDir = path.join(dataDir, 'files');
   const server = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, DATA_DIR: dataDir, UPLOAD_DIR: uploadDir, RELAY_TOKEN: TEST_TOKEN },
+    env: { ...process.env, DATA_DIR: dataDir, UPLOAD_DIR: uploadDir },
     stdio: 'ignore',
   });
   const fail = (msg) => { console.error('FAIL:', msg); server.kill(); process.exit(1); };
@@ -67,9 +61,6 @@ async function pasteImages(page, n) {
 
     // --- Session 1: paste 2 images, verify no confirmation, send ---
     const ctx1 = await browser.newContext();
-    // Pre-seed the relay token so chat.html's ensureToken() finds it already
-    // set and never blocks on a JS prompt() dialog.
-    await ctx1.addInitScript(({ key, token }) => localStorage.setItem(key, token), { key: TOKEN_KEY, token: TEST_TOKEN });
     const page = await ctx1.newPage();
     const pageErrors = [];
     page.on('pageerror', e => pageErrors.push(e.message));
@@ -99,16 +90,16 @@ async function pasteImages(page, n) {
     });
     if (renderedImgs !== 2) fail(`rendered message should show 2 images exactly, got ${renderedImgs} (double-render?)`);
 
-    const sent = await page.evaluate(async ({ base, token }) => {
-      const j = await (await fetch(base + '/relay/agent-relay', { headers: { Authorization: 'Bearer ' + token } })).json();
+    const sent = await page.evaluate(async (base) => {
+      const j = await (await fetch(base + '/relay/agent-relay')).json();
       const m = j.messages[j.messages.length - 1];
       const urls = (m.attachments || []).slice();
       (m.body.match(/\[image: (\/files\/\S+)\]/g) || []).forEach(t => urls.push(t.match(/\[image: (\/files\/\S+)\]/)[1]));
       const uniq = [...new Set(urls)];
       const served = [];
-      for (const u of uniq) { const r = await fetch(base + u + '?token=' + encodeURIComponent(token)); served.push({ status: r.status, bytes: (await r.arrayBuffer()).byteLength, type: r.headers.get('content-type') }); }
+      for (const u of uniq) { const r = await fetch(base + u); served.push({ status: r.status, bytes: (await r.arrayBuffer()).byteLength, type: r.headers.get('content-type') }); }
       return { id: m.id, imgCount: uniq.length, served };
-    }, { base: BASE, token: TEST_TOKEN });
+    }, BASE);
 
     if (sent.imgCount !== 2) fail(`sent message should carry 2 images, got ${sent.imgCount}`);
     for (const s of sent.served) {
@@ -117,7 +108,6 @@ async function pasteImages(page, n) {
 
     // --- Session 2: persistence — fresh context shows the same message ---
     const ctx2 = await browser.newContext();
-    await ctx2.addInitScript(({ key, token }) => localStorage.setItem(key, token), { key: TOKEN_KEY, token: TEST_TOKEN });
     const page2 = await ctx2.newPage();
     await page2.goto(`${BASE}/chat`, { waitUntil: 'domcontentloaded' });
     await page2.waitForTimeout(900);
@@ -127,10 +117,10 @@ async function pasteImages(page, n) {
     // --- Delete — remove the message, verify gone from server ---
     await page2.evaluate((id) => document.querySelector(`.msg[data-id="${id}"] .del`).click(), sent.id);
     await page2.waitForTimeout(800);
-    const stillOnServer = await page2.evaluate(async ({ base, id, token }) => {
-      const j = await (await fetch(base + '/relay/agent-relay', { headers: { Authorization: 'Bearer ' + token } })).json();
+    const stillOnServer = await page2.evaluate(async ({ base, id }) => {
+      const j = await (await fetch(base + '/relay/agent-relay')).json();
       return j.messages.some(m => m.id === id);
-    }, { base: BASE, id: sent.id, token: TEST_TOKEN });
+    }, { base: BASE, id: sent.id });
     if (stillOnServer) fail('deleted message still present on the server');
 
     console.log(`PASS: multi-image(${sent.imgCount}) served ${sent.served.map(s => s.bytes + 'b').join(',')}; no confirmation; persisted across context; delete removed from server`);
