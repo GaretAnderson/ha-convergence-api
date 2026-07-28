@@ -82,7 +82,8 @@ jobs:
 
       - name: docker inspect state (always shown)
         if: always()
-        run: docker inspect convergence-api-ci --format 'State: {{json .State}}'
+        run: |
+          docker inspect convergence-api-ci --format 'State: {{json .State}}'
 
       - name: Cleanup
         if: always()
