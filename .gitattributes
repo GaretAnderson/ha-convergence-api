@@ -1,0 +1,8 @@
+# Shell scripts must always use LF line endings, regardless of the
+# committer's platform or core.autocrlf setting. A CRLF shebang/line-ending
+# in a shell script breaks `exec bash script.sh` in Linux containers
+# (`unable to exec bash\r`, exit 127) — this caused the v0.8.1 Docker boot
+# crash (issue #34): the container reported state=started/cpu=0 with empty
+# logs because bash itself never started. Same fix pattern as
+# garets-config#934.
+*.sh text eol=lf
