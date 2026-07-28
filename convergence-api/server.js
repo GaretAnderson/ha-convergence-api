@@ -1,19 +1,91 @@
+'use strict';
+
+const fsSync = require('fs');
+
+// ─── Boot-crash hardening (issue #34) ───────────────────────────────────────
+// v0.8.1 crashed on startup with *empty logs* — the container exited before
+// anything reached the log. Root cause could never be pinned to one line
+// because nothing was ever logged; whatever threw, it threw silently. These
+// handlers make that class of failure structurally impossible from now on:
+// any uncaught throw or rejection anywhere in the process (including at
+// require()/module-init time, before app.listen()) is written *synchronously*
+// to fd 2 with `fs.writeSync` — bypassing Node's normal async stdio stream,
+// which can be buffered and lost if the process exits before it flushes —
+// and then exits non-zero. A boot crash can now never be silent again.
+function logFatal(context, err) {
+  const msg = `[fatal] ${context}: ${err && err.stack ? err.stack : err}\n`;
+  try { fsSync.writeSync(2, msg); } catch { /* fd 2 unavailable; nothing more we can do */ }
+}
+
+process.on('uncaughtException', (err) => {
+  logFatal('uncaughtException', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logFatal('unhandledRejection', reason);
+  process.exit(1);
+});
+
 const express = require('express');
+const { renderMessageHtml, isSafeAttachmentUrl } = require('./render.js');
+const { normalizeRecipients } = require('./addressing.js');
+const { createRelayAuthMiddleware } = require('./auth.js');
 const app = express();
-const PORT = 8088;
-// Ingress uses a separate internal port so the published relay port (8088, used
+const PORT = 8188;
+// Ingress uses a separate internal port so the published relay port (8188, used
 // by CLI tools + HA rest_command) doesn't collide with ingress_port — that
 // collision breaks HA sidebar-panel injection.
 const INGRESS_PORT = parseInt(process.env.INGRESS_PORT || '8099', 10);
 const RELAY_MAX = parseInt(process.env.RELAY_MAX || '5000', 10);
+const RELAY_TOKEN = (process.env.RELAY_TOKEN || '').trim();
+// Deploy-order transition (issue #31 review): when an operator sets
+// relay_token for the first time (or rotates it) on a previously-open/older
+// deployment, existing clients and the phone UI (which hasn't prompted for +
+// stored a token yet) shouldn't be hard-401'd the instant the add-on
+// restarts. `relay_token_grace_hours` (default 24, 0 disables) gives a
+// bounded window — counted from THIS process start — during which requests
+// without a valid token are still accepted (and logged) so the rollout can
+// happen without a lockout. It never weakens the fails-closed guarantee: an
+// unset relay_token still always 503s regardless of grace.
+const RELAY_TOKEN_GRACE_HOURS = parseFloat(process.env.RELAY_TOKEN_GRACE_HOURS || '24');
+const relayAuthGraceUntil = (RELAY_TOKEN && RELAY_TOKEN_GRACE_HOURS > 0)
+  ? Date.now() + RELAY_TOKEN_GRACE_HOURS * 3600000
+  : 0;
 
 app.use(express.json());
 
 // ─── Health ──────────────────────────────────────────────────────────────────
+// Deliberately unauthenticated — no sensitive data, and monitoring needs to
+// reach it without a token.
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.7.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.2' });
 });
+
+// ─── Auth (issue #29 / #24, homeassistant#70) ───────────────────────────────
+// Shared-secret auth for the relay. The token lives in the add-on's
+// `relay_token` option (set via the HA UI, stored in HA's supervisor config —
+// never in git) and is passed in as RELAY_TOKEN. See auth.js for the token
+// extraction/comparison logic (Authorization: Bearer header, or ?token= query
+// param for browser EventSource/SSE and the phone-UI chat page). Fails
+// CLOSED: unset relay_token rejects every /relay* and /files/* request.
+const requireRelayAuth = createRelayAuthMiddleware(() => RELAY_TOKEN, {
+  graceUntil: () => relayAuthGraceUntil
+});
+
+if (!RELAY_TOKEN) {
+  console.warn('[relay] WARNING: relay_token is not set — all /relay and /files requests will be rejected (401/503) until it is configured.');
+} else if (relayAuthGraceUntil) {
+  console.warn(
+    `[relay] NOTE: relay_token auth transition grace window active until ${new Date(relayAuthGraceUntil).toISOString()} ` +
+    `(relay_token_grace_hours=${RELAY_TOKEN_GRACE_HOURS}) — requests without a valid token are still allowed through ` +
+    `and logged during this window. Set relay_token_grace_hours: 0 to disable.`
+  );
+}
+
+app.use('/relay', requireRelayAuth);
+app.use('/files', requireRelayAuth);
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
 
@@ -114,13 +186,29 @@ setInterval(() => {
 // POST /relay/:topic — publish a message
 app.post('/relay/:topic', (req, res) => {
   const topic = getTopic(req.params.topic);
+  const body = req.body.body || '';
   const msg = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     timestamp: new Date().toISOString(),
     from: req.body.from || 'unknown',
-    to: req.body.to || null,
-    body: req.body.body || '',
-    attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
+    // Multi-recipient addressing (garets-config#901 Phase 1): `to` is a
+    // string array of handles. A single string is still accepted from
+    // legacy senders and normalized to a one-element array. No `@all`.
+    to: normalizeRecipients(req.body.to),
+    body,
+    // Sanitized markdown rendering of `body`, safe to insert via innerHTML.
+    // Computed once at publish time so every consumer (poll, SSE, /chat)
+    // gets identical rendering without re-parsing markdown client-side.
+    bodyHtml: renderMessageHtml(body),
+    // Defense in depth against the `attachments` array XSS path (issue #31
+    // review): the client also validates before rendering (chat.html
+    // imgTag()), but never trust the client — filter to the same
+    // http(s)/root-relative allowlist here so a malicious/buggy sender can
+    // never persist a javascript:/data: (or anything else) attachment URL in
+    // the first place.
+    attachments: Array.isArray(req.body.attachments)
+      ? req.body.attachments.filter(isSafeAttachmentUrl)
+      : [],
     replyTo: req.body.replyTo || null,
     metadata: req.body.metadata || {},
     receipts: { delivered: [], read: [] }
@@ -264,10 +352,16 @@ app.get('/', (_req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Convergence API listening on port ${PORT}`);
-  console.log(`  /api/health       — health check`);
-  console.log(`  /relay/:topic     — publish (POST) / poll (GET)`);
-  console.log(`  /relay/:topic/stream — SSE subscribe`);
+  console.log(`  /api/health       — health check (unauthenticated)`);
+  console.log(`  /relay/:topic     — publish (POST) / poll (GET) [auth required]`);
+  console.log(`  /relay/:topic/stream — SSE subscribe [auth required]`);
+  console.log(`  /files/:filename  — serve uploaded attachments [auth required]`);
+  console.log(`  /chat             — Agent Chat web UI (renders markdown, multi-recipient composer)`);
   console.log(`  Relay max messages per topic: ${RELAY_MAX}`);
+  console.log(`  Relay auth: ${RELAY_TOKEN ? 'enabled' : 'DISABLED (no relay_token set — requests will be rejected)'}`);
+}).on('error', (err) => {
+  logFatal(`failed to bind relay port ${PORT}`, err);
+  process.exit(1);
 });
 
 // Second listener for Home Assistant ingress (sidebar panel). Same app, distinct
@@ -275,5 +369,8 @@ app.listen(PORT, '0.0.0.0', () => {
 if (INGRESS_PORT && INGRESS_PORT !== PORT) {
   app.listen(INGRESS_PORT, '0.0.0.0', () => {
     console.log(`Ingress (HA sidebar) listening on port ${INGRESS_PORT}`);
+  }).on('error', (err) => {
+    logFatal(`failed to bind ingress port ${INGRESS_PORT}`, err);
+    process.exit(1);
   });
 }
