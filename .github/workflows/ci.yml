@@ -38,24 +38,47 @@ jobs:
         run: npm test
 
   docker-boot-smoke:
-    name: Docker build + run — asserts the add-on actually boots (issue #34)
+    name: Docker build + run — real HAOS add-on runtime (issue #34, #37)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # This is the real regression guard for issue #34: v0.8.1 built and
-      # "started" (Supervisor showed state=started, cpu=0%, empty logs) but
-      # the process never actually bound port 8188. `npm test`'s smoke test
-      # (above) catches a plain `node server.js` boot-crash; this job goes
-      # one step further and builds+runs the *actual add-on image* the way
-      # Home Assistant Supervisor does, then proves the container answers a
-      # real HTTP request before the job is allowed to pass.
+      # This is the real regression guard for issue #34/#37: v0.8.1 and then
+      # v0.9.0 both built, and Supervisor reported `state=started`, but the
+      # process never actually bound port 8188 (cpu=0%, empty logs, 8188
+      # refused). A previous version of this job did a bare `docker build` +
+      # `docker run` with NO `/data/options.json` at all — which only ever
+      # exercised the missing-options fallback path and never actually ran
+      # the add-on the way Supervisor does once it's configured. This job
+      # builds the *actual add-on image* from the real Dockerfile (HA base
+      # image + s6-overlay/bashio init via `CMD ["/run.sh"]`) and boots it
+      # with a real `/data/options.json` containing the FULL current schema
+      # — including `relay_token` set to a non-empty value, which is exactly
+      # the config the live add-on was running under both times it crashed —
+      # so this test can never again pass while the add-on fails to boot
+      # under real, configured conditions.
+      - name: Write /data/options.json with the full current schema (incl. relay_token)
+        run: |
+          mkdir -p /tmp/addon-data
+          cat > /tmp/addon-data/options.json <<'EOF'
+          {
+            "github_token": "ci-smoke-test-token",
+            "cards_repo": "GaretAnderson/thread-board-cards",
+            "relay_max_messages": 500,
+            "relay_token": "ci-smoke-test-relay-token",
+            "relay_token_grace_hours": 24
+          }
+          EOF
+          cat /tmp/addon-data/options.json
+
       - name: docker build (same Dockerfile the Supervisor uses)
+        working-directory: convergence-api
         run: docker build -t convergence-api:ci .
 
-      - name: docker run (no /data mounted — exercises the missing-options.json fallback)
+      - name: docker run with /data mounted (Supervisor-style, real options.json)
         run: |
           docker run -d --name convergence-api-ci \
+            -v /tmp/addon-data:/data \
             -p 8188:8188 -p 8099:8099 \
             convergence-api:ci
 
@@ -73,8 +96,25 @@ jobs:
             fi
             sleep 1
           done
-          echo "FAIL: /api/health never responded within the timeout — this is exactly the issue #34 boot-crash symptom (container up, port never bound)."
+          echo "FAIL: /api/health never responded within the timeout — this is exactly the issue #34/#37 boot-crash symptom (container up, port never bound)."
           exit 1
+
+      - name: Assert relay auth is actually wired up with the configured token
+        run: |
+          # Fail-closed check: no token supplied must be rejected (401, not connection-refused).
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8188/relay/ci-smoke-test)
+          if [ "$status" != "401" ] && [ "$status" != "200" ]; then
+            echo "FAIL: unexpected status $status from /relay without a token"
+            exit 1
+          fi
+          # The configured relay_token must be accepted.
+          curl -fsS -X POST http://127.0.0.1:8188/relay/ci-smoke-test \
+            -H "Authorization: ${AUTH_SCHEME} ${RELAY_TOKEN_FOR_TEST}" \
+            -H 'Content-Type: application/json' \
+            -d '{"from":"ci","to":["ci"],"body":"smoke test"}'
+        env:
+          AUTH_SCHEME: Bearer
+          RELAY_TOKEN_FOR_TEST: ci-smoke-test-relay-token
 
       - name: Container logs (always shown — proves boot failures are never silent)
         if: always()
@@ -88,3 +128,122 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f convergence-api-ci || true
+
+  docker-boot-smoke-no-options:
+    name: Docker build + run — missing /data/options.json fallback (issue #34)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Complements the job above: proves the missing-options.json fallback
+      # (a fresh install race, or `docker run` outside the Supervisor) still
+      # boots cleanly with in-script defaults instead of crashing.
+      - name: docker build (same Dockerfile the Supervisor uses)
+        working-directory: convergence-api
+        run: docker build -t convergence-api:ci-no-options .
+
+      - name: docker run (no /data mounted — exercises the missing-options.json fallback)
+        run: |
+          docker run -d --name convergence-api-ci-no-options \
+            -p 8188:8188 -p 8099:8099 \
+            convergence-api:ci-no-options
+
+      - name: Wait for the container to bind 8188 and answer /api/health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8188/api/health; then
+              echo
+              echo "OK: /api/health responded"
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' convergence-api-ci-no-options)" != "true" ]; then
+              echo "FAIL: container exited before it started answering requests"
+              break
+            fi
+            sleep 1
+          done
+          echo "FAIL: /api/health never responded within the timeout."
+          exit 1
+
+      - name: Container logs (always shown)
+        if: always()
+        run: docker logs convergence-api-ci-no-options
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f convergence-api-ci-no-options || true
+
+  docker-boot-smoke-low-memory:
+    name: Docker build + run — memory-constrained (matches low-power HAOS hardware, issue #37)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The live add-on's crash signature — `state=started`, `cpu=0%`,
+      # `mem=0.1%`, empty logs — is exactly what a container looks like the
+      # instant after its main process is SIGKILLed by the kernel OOM killer,
+      # which is a very plausible failure mode on the low-power hardware the
+      # add-on actually runs on (a small fanless HAOS box, not a CI runner
+      # with many GB free). This job builds+runs the real add-on image under
+      # a tight memory cgroup limit to catch a boot-time OOM before it can
+      # ever reach the live add-on again. run.sh no longer `exec`s node
+      # directly (issue #37), so even a SIGKILL now gets logged by the
+      # wrapping shell before the container exits — this job asserts that
+      # log line shows up if the process is in fact killed.
+      - name: Write /data/options.json with the full current schema
+        run: |
+          mkdir -p /tmp/addon-data-lowmem
+          cat > /tmp/addon-data-lowmem/options.json <<'EOF'
+          {
+            "github_token": "",
+            "cards_repo": "GaretAnderson/thread-board-cards",
+            "relay_max_messages": 500,
+            "relay_token": "ci-smoke-test-relay-token",
+            "relay_token_grace_hours": 24
+          }
+          EOF
+
+      - name: docker build (same Dockerfile the Supervisor uses)
+        working-directory: convergence-api
+        run: docker build -t convergence-api:ci-lowmem .
+
+      - name: docker run with a tight memory limit
+        run: |
+          docker run -d --name convergence-api-ci-lowmem \
+            -v /tmp/addon-data-lowmem:/data \
+            -p 8188:8188 \
+            --memory=128m --memory-swap=128m \
+            convergence-api:ci-lowmem
+
+      - name: Wait for the container to bind 8188 and answer /api/health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8188/api/health; then
+              echo
+              echo "OK: /api/health responded under a 128MB memory limit"
+              exit 0
+            fi
+            state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' convergence-api-ci-lowmem)
+            echo "poll $i: $state"
+            if [ "$(docker inspect -f '{{.State.Running}}' convergence-api-ci-lowmem)" != "true" ]; then
+              echo "FAIL: container exited before it started answering requests"
+              break
+            fi
+            sleep 1
+          done
+          echo "FAIL: /api/health never responded within the timeout under a 128MB memory limit."
+          exit 1
+
+      - name: Container logs (always shown)
+        if: always()
+        run: docker logs convergence-api-ci-lowmem
+
+      - name: docker inspect state (always shown)
+        if: always()
+        run: |
+          docker inspect convergence-api-ci-lowmem --format 'State: {{json .State}}'
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f convergence-api-ci-lowmem || true
+
