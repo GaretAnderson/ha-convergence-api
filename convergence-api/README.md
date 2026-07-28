@@ -138,10 +138,19 @@ curl -H "Authorization: Bearer $RELAY_TOKEN" "http://homeassistant.local:8188/re
 ```bash
 npm ci
 npm test              # unit tests (receipts, addressing, auth incl. grace-window) + render.js sanitization tests
+                       # + a startup smoke test (spawns the real server, asserts it binds 8188 and
+                       # answers /api/health — issue #34's regression guard)
 npx playwright install chromium
 node tests/paste.integration.js              # end-to-end: paste/upload/send/persist/delete, with auth
 node tests/attachment-xss.integration.js     # end-to-end: attachments[] XSS probe (javascript:/data:/attribute-breakout)
 ```
+
+CI (`.github/workflows/ci.yml`) runs `npm test` on every push/PR, **and**
+separately builds the actual add-on Docker image and runs it (no `/data`
+mounted, exercising `run.sh`'s missing-`options.json` fallback) to assert it
+binds port 8188 and answers `/api/health` before the job can pass — the exact
+check that would have caught the v0.8.1 boot-crash (issue #34) before it ever
+reached the live add-on.
 
 ## Port
 

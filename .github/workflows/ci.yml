@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: convergence-api
+
+jobs:
+  test:
+    name: Unit + startup smoke test (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # `npm ci --omit=dev` mirrors exactly what the Dockerfile runs, so a
+      # package.json/package-lock.json drift (a runtime dep stuck under
+      # devDependencies, an out-of-sync lockfile, etc. — issue #34) fails here
+      # instead of only inside a Docker build.
+      - name: npm ci --omit=dev (matches Dockerfile)
+        run: npm ci --omit=dev
+
+      # Unit tests need devDependencies too (none currently, but keep this
+      # honest if that changes) — install them separately from the
+      # production-parity check above.
+      - name: npm ci (full, for tests)
+        run: npm ci
+
+      - name: npm test (unit + render/addressing/auth + startup smoke test)
+        run: npm test
+
+  docker-boot-smoke:
+    name: Docker build + run — asserts the add-on actually boots (issue #34)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # This is the real regression guard for issue #34: v0.8.1 built and
+      # "started" (Supervisor showed state=started, cpu=0%, empty logs) but
+      # the process never actually bound port 8188. `npm test`'s smoke test
+      # (above) catches a plain `node server.js` boot-crash; this job goes
+      # one step further and builds+runs the *actual add-on image* the way
+      # Home Assistant Supervisor does, then proves the container answers a
+      # real HTTP request before the job is allowed to pass.
+      - name: docker build (same Dockerfile the Supervisor uses)
+        run: docker build -t convergence-api:ci .
+
+      - name: docker run (no /data mounted — exercises the missing-options.json fallback)
+        run: |
+          docker run -d --name convergence-api-ci \
+            -p 8188:8188 -p 8099:8099 \
+            convergence-api:ci
+
+      - name: Wait for the container to bind 8188 and answer /api/health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8188/api/health; then
+              echo
+              echo "OK: /api/health responded"
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' convergence-api-ci)" != "true" ]; then
+              echo "FAIL: container exited before it started answering requests"
+              break
+            fi
+            sleep 1
+          done
+          echo "FAIL: /api/health never responded within the timeout — this is exactly the issue #34 boot-crash symptom (container up, port never bound)."
+          exit 1
+
+      - name: Container logs (always shown — proves boot failures are never silent)
+        if: always()
+        run: docker logs convergence-api-ci
+
+      - name: docker inspect state (always shown)
+        if: always()
+        run: docker inspect convergence-api-ci --format 'State: {{json .State}}'
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f convergence-api-ci || true

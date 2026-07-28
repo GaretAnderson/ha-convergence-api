@@ -1,10 +1,39 @@
+'use strict';
+
+const fsSync = require('fs');
+
+// ─── Boot-crash hardening (issue #34) ───────────────────────────────────────
+// v0.8.1 crashed on startup with *empty logs* — the container exited before
+// anything reached the log. Root cause could never be pinned to one line
+// because nothing was ever logged; whatever threw, it threw silently. These
+// handlers make that class of failure structurally impossible from now on:
+// any uncaught throw or rejection anywhere in the process (including at
+// require()/module-init time, before app.listen()) is written *synchronously*
+// to fd 2 with `fs.writeSync` — bypassing Node's normal async stdio stream,
+// which can be buffered and lost if the process exits before it flushes —
+// and then exits non-zero. A boot crash can now never be silent again.
+function logFatal(context, err) {
+  const msg = `[fatal] ${context}: ${err && err.stack ? err.stack : err}\n`;
+  try { fsSync.writeSync(2, msg); } catch { /* fd 2 unavailable; nothing more we can do */ }
+}
+
+process.on('uncaughtException', (err) => {
+  logFatal('uncaughtException', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logFatal('unhandledRejection', reason);
+  process.exit(1);
+});
+
 const express = require('express');
 const { renderMessageHtml, isSafeAttachmentUrl } = require('./render.js');
 const { normalizeRecipients } = require('./addressing.js');
 const { createRelayAuthMiddleware } = require('./auth.js');
 const app = express();
-const PORT = 8088;
-// Ingress uses a separate internal port so the published relay port (8088, used
+const PORT = 8188;
+// Ingress uses a separate internal port so the published relay port (8188, used
 // by CLI tools + HA rest_command) doesn't collide with ingress_port — that
 // collision breaks HA sidebar-panel injection.
 const INGRESS_PORT = parseInt(process.env.INGRESS_PORT || '8099', 10);
@@ -31,7 +60,7 @@ app.use(express.json());
 // reach it without a token.
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.8.1' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.0' });
 });
 
 // ─── Auth (issue #29 / #24, homeassistant#70) ───────────────────────────────
@@ -330,6 +359,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  /chat             — Agent Chat web UI (renders markdown, multi-recipient composer)`);
   console.log(`  Relay max messages per topic: ${RELAY_MAX}`);
   console.log(`  Relay auth: ${RELAY_TOKEN ? 'enabled' : 'DISABLED (no relay_token set — requests will be rejected)'}`);
+}).on('error', (err) => {
+  logFatal(`failed to bind relay port ${PORT}`, err);
+  process.exit(1);
 });
 
 // Second listener for Home Assistant ingress (sidebar panel). Same app, distinct
@@ -337,5 +369,8 @@ app.listen(PORT, '0.0.0.0', () => {
 if (INGRESS_PORT && INGRESS_PORT !== PORT) {
   app.listen(INGRESS_PORT, '0.0.0.0', () => {
     console.log(`Ingress (HA sidebar) listening on port ${INGRESS_PORT}`);
+  }).on('error', (err) => {
+    logFatal(`failed to bind ingress port ${INGRESS_PORT}`, err);
+    process.exit(1);
   });
 }

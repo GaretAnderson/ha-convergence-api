@@ -3,8 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "npm run test:unit && node --test tests/render.test.js tests/addressing.test.js tests/auth.test.js",
-    "test:unit": "node tests/receipts.unit.js"
+    "test": "npm run test:unit && node --test tests/render.test.js tests/addressing.test.js tests/auth.test.js && npm run test:smoke",
+    "test:unit": "node tests/receipts.unit.js",
+    "test:smoke": "node --test tests/smoke.test.js"
   },
   "dependencies": {
     "express": "^4.21.0",
