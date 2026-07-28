@@ -17,7 +17,16 @@ header .status { font-size: 12px; color: #4ecca3; }
 .msg.sent { align-self: flex-end; background: #0f3460; color: #fff; }
 .msg.received { align-self: flex-start; background: #16213e; border: 1px solid #0f3460; }
 .msg .from { font-size: 11px; color: #4ecca3; margin-bottom: 4px; }
-.msg .text { white-space: pre-wrap; }
+.msg .text { white-space: normal; }
+.msg .text p { margin: 0 0 6px; }
+.msg .text p:last-child { margin-bottom: 0; }
+.msg .text pre { background: #0f1729; padding: 8px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+.msg .text code { background: rgba(255,255,255,0.08); padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+.msg .text pre code { background: none; padding: 0; }
+.msg .text table { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
+.msg .text th, .msg .text td { border: 1px solid #0f3460; padding: 4px 8px; }
+.msg .text a { color: #4ecca3; }
+.msg .text blockquote { border-left: 3px solid #0f3460; margin: 4px 0; padding-left: 8px; color: #b7c1d1; }
 .msg .att { display: block; max-width: 100%; max-height: 300px; border-radius: 8px; margin-top: 6px; cursor: pointer; }
 .msg .del { position: absolute; top: 2px; right: 4px; background: transparent; border: none; color: #aaa; font-size: 15px; line-height: 1; cursor: pointer; opacity: 0.4; padding: 2px; }
 .msg:hover .del { opacity: 1; }
@@ -54,13 +63,14 @@ header .status { font-size: 12px; color: #4ecca3; }
 <header>
   <h1>Agent Chat</h1>
   <span class="status" id="status">connecting...</span>
+  <button id="key-btn" title="Set relay token" style="margin-left:auto;background:transparent;border:1px solid #0f3460;color:#4ecca3;border-radius:50%;width:28px;height:28px;cursor:pointer;">🔑</button>
 </header>
 <div id="messages"></div>
 <button id="jump-latest">↓ Latest</button>
-<div class="addressing">
+<div class="addressing" id="addressing">
   <button class="active" data-to="@aorus">@aorus</button>
   <button data-to="@laptop">@laptop</button>
-  <button data-to="@all">@all</button>
+  <button data-to="@ha-assist">@ha-assist</button>
 </div>
 <div id="preview"></div>
 <div id="input-bar">
@@ -75,20 +85,94 @@ header .status { font-size: 12px; color: #4ecca3; }
 // Strips the final path segment (the page itself) to get the directory prefix.
 const API = window.location.pathname.replace(/\/[^/]*$/, '');
 const TOPIC = 'agent-relay';
-let currentTo = '@aorus';
 let lastTimestamp = new Date(Date.now() - 3600000).toISOString();
 
-// Addressing buttons
+// ─── Relay auth (issue #29 / #24) ───────────────────────────────────────────
+// /relay* and /files/* now require a shared-secret token. It's stored in this
+// browser's localStorage (never sent anywhere but this relay) so the phone/
+// sidebar UI keeps working without re-prompting every load. Sent as an
+// `Authorization: Bearer` header on POST/DELETE, and as a `?token=` query
+// param on GET/EventSource/`<img src>` requests, which can't set headers.
+const TOKEN_KEY = 'agentChatRelayToken';
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); }
+function ensureToken() {
+  let t = getToken();
+  if (!t) {
+    t = window.prompt('Enter the Agent Relay token (relay_token add-on option):') || '';
+    setToken(t);
+  }
+  return t;
+}
+function authQS(url) {
+  const t = getToken();
+  if (!t) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t);
+}
+function authHeaders(extra) {
+  const t = getToken();
+  return Object.assign({}, extra || {}, t ? { Authorization: 'Bearer ' + t } : {});
+}
+document.getElementById('key-btn').addEventListener('click', () => {
+  const t = window.prompt('Relay token:', getToken()) || '';
+  if (t) { setToken(t); location.reload(); }
+});
+
+// Addressing: multi-select recipient chips (garets-config#901 Phase 1). No
+// `@all` — `to` is sent as a string array of the currently active handles.
+// At least one handle must stay selected.
+let selectedTo = new Set(['@aorus']);
 document.querySelectorAll('.addressing button').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.addressing button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentTo = btn.dataset.to;
+    const to = btn.dataset.to;
+    if (selectedTo.has(to)) {
+      if (selectedTo.size > 1) { selectedTo.delete(to); btn.classList.remove('active'); }
+    } else {
+      selectedTo.add(to);
+      btn.classList.add('active');
+    }
   });
 });
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function imgTag(url) { return `<img class="att" src="${API}${url}" onclick="window.open('${API}${url}')">`; }
+
+// Attachment URL allowlist (issue #31 review — XSS via the `attachments[]`
+// array): only http(s) absolute URLs or root-relative `/files/...` paths are
+// ever turned into an <img>. Kept in sync with render.js's
+// isSafeAttachmentUrl (server-side), which also filters this array at
+// publish time — this is defense in depth for the client render path itself.
+// javascript:/data:/vbscript:/protocol-relative/bare-relative URLs, and
+// anything with control characters, are rejected outright.
+function isSafeAttachmentUrl(url) {
+  const str = String(url || '').trim();
+  if (!str) return false;
+  if (/[\u0000-\u001f\u007f]/.test(str)) return false;
+  if (str.startsWith('/') && !str.startsWith('//')) return true;
+  try {
+    const parsed = new URL(str);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// Builds an attachment <img> element via DOM APIs (property assignment, not
+// string-concatenated HTML/inline `onclick`) so an attachment URL can never
+// break out of an attribute or inline-script context — only the allowlisted
+// URL string itself ever reaches `src`. Returns null if the URL is rejected.
+function buildAttachmentImg(url) {
+  if (!isSafeAttachmentUrl(url)) return null;
+  const str = String(url).trim();
+  const rootRelative = str.startsWith('/') && !str.startsWith('//');
+  const src = rootRelative ? authQS(API + str) : str;
+  const img = document.createElement('img');
+  img.className = 'att';
+  img.src = src;
+  img.alt = 'attachment';
+  img.loading = 'lazy';
+  img.addEventListener('click', () => window.open(src, '_blank', 'noopener'));
+  return img;
+}
 
 // Delivery receipts → per-recipient colored names inline (teal = read, grey =
 // delivered-not-yet-read). Names replace the old ✓/✓✓ so you can see WHO
@@ -156,15 +240,31 @@ function buildMessageEl(msg) {
   const seenUrls = new Set();
   const addUrl = (u) => { if (!seenUrls.has(u)) { seenUrls.add(u); urls.push(u); } };
   if (Array.isArray(msg.attachments)) msg.attachments.forEach(addUrl);
+  // Legacy back-compat: messages persisted before the sanitized-markdown
+  // rendering path (render.js) embedded images as `[image: url]` tokens
+  // directly in `body` and have no `bodyHtml` field.
   text = text.replace(/\[image: (\/files\/\S+)\]/g, (_m, u) => { addUrl(u); return ''; });
+  // `bodyHtml` is computed server-side (render.js): sanitized markdown, safe
+  // to insert via innerHTML. Fall back to an escaped plain-text paragraph
+  // for older persisted messages that predate it.
+  const bodyHtml = msg.bodyHtml || (text.trim() ? `<p>${escapeHtml(text.trim())}</p>` : '');
   const time = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
 
   div.innerHTML =
     (sent ? '' : `<div class="from">${escapeHtml(msg.from)}</div>`) +
-    (text.trim() ? `<span class="text">${escapeHtml(text.trim())}</span>` : '') +
-    urls.map(imgTag).join('') +
+    (bodyHtml ? `<div class="text">${bodyHtml}</div>` : '') +
     `<div class="time">${time}${sent ? ticksSpan(msg) : ''}</div>` +
     `<button class="del" title="Delete message">&times;</button>`;
+
+  // Attachments are inserted as real DOM elements (buildAttachmentImg), not
+  // string-concatenated HTML, and placed before the time/delete row that
+  // .innerHTML above just created.
+  const timeEl = div.querySelector('.time');
+  for (const u of urls) {
+    const img = buildAttachmentImg(u);
+    if (img) div.insertBefore(img, timeEl);
+  }
+
   div.querySelector('.del').addEventListener('click', () => deleteMessage(msg.id));
   return div;
 }
@@ -190,7 +290,8 @@ function removeMessageEl(id) {
 
 async function deleteMessage(id) {
   try {
-    const r = await fetch(`${API}/relay/${TOPIC}/${id}`, { method: 'DELETE' });
+    const r = await fetch(`${API}/relay/${TOPIC}/${id}`, { method: 'DELETE', headers: authHeaders() });
+    if (r.status === 401) return addSystem('Delete failed: unauthorized — check the relay token (🔑).');
     if (r.ok) removeMessageEl(id);
   } catch {}
 }
@@ -208,18 +309,19 @@ async function send() {
   const text = input.value.trim();
   const atts = pendingAttachments.slice();
   if (!text && !atts.length) return;
+  if (!selectedTo.size) return addSystem('Select at least one recipient.');
   input.value = '';
   pendingAttachments = [];
   const preview = document.getElementById('preview');
   preview.innerHTML = '';
   preview.style.display = 'none';
-  const body = text + atts.map(u => ` [image: ${u}]`).join('');
   try {
     const r = await fetch(`${API}/relay/${TOPIC}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: 'phone', to: currentTo, body, attachments: atts, replyTo: 'ha-assist', metadata: {} })
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ from: 'phone', to: Array.from(selectedTo), body: text, attachments: atts, replyTo: 'ha-assist', metadata: {} })
     });
+    if (r.status === 401) return addSystem('Send failed: unauthorized — check the relay token (🔑).');
     renderMessage(await r.json());
   } catch (e) { addSystem('Failed to send: ' + e.message); }
 }
@@ -229,7 +331,7 @@ document.getElementById('msg-input').addEventListener('keydown', e => { if (e.ke
 
 // SSE subscription for real-time messages + deletions
 function connect() {
-  const es = new EventSource(`${API}/relay/${TOPIC}/stream`);
+  const es = new EventSource(authQS(`${API}/relay/${TOPIC}/stream`));
   es.onopen = () => document.getElementById('status').textContent = 'connected';
   es.onmessage = (e) => {
     try {
@@ -245,6 +347,7 @@ function connect() {
     setTimeout(connect, 5000);
   };
 }
+ensureToken();
 connect();
 
 // Paged history — load the newest page anchored to the bottom, then lazily
@@ -273,7 +376,7 @@ async function loadOlder() {
   const el = msgsEl();
   const prevH = el.scrollHeight, prevT = el.scrollTop;
   try {
-    const data = await fetch(`${API}/relay/${TOPIC}?before=${encodeURIComponent(oldestId)}&limit=${PAGE}`).then(r => r.json());
+    const data = await fetch(authQS(`${API}/relay/${TOPIC}?before=${encodeURIComponent(oldestId)}&limit=${PAGE}`)).then(r => r.json());
     const msgs = data.messages || [];
     hasMore = !!data.hasMore;
     topSpinner(false);
@@ -291,7 +394,7 @@ async function loadOlder() {
 
 async function loadInitial() {
   try {
-    const data = await fetch(`${API}/relay/${TOPIC}?limit=${PAGE}`).then(r => r.json());
+    const data = await fetch(authQS(`${API}/relay/${TOPIC}?limit=${PAGE}`)).then(r => r.json());
     const msgs = data.messages || [];
     hasMore = !!data.hasMore;
     if (msgs.length) oldestId = msgs[0].id;
@@ -314,7 +417,8 @@ loadInitial();
 
 // Image attachments — paste, drop, or file picker; supports multiple per message
 async function uploadImage(file) {
-  const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: { 'Content-Type': file.type }, body: file });
+  const resp = await fetch(`${API}/relay/upload`, { method: 'POST', headers: authHeaders({ 'Content-Type': file.type }), body: file });
+  if (resp.status === 401) throw new Error('unauthorized — check the relay token (🔑)');
   const data = await resp.json();
   return data.url;
 }

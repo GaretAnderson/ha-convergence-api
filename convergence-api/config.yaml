@@ -1,6 +1,6 @@
 name: "Convergence API"
 description: "Always-on API for agent relay, thread board, and pipeline status. Provides real-time cross-machine agent messaging via SSE."
-version: "0.8.2"
+version: "0.9.0"
 slug: "convergence_api"
 init: false
 ingress: true
@@ -11,14 +11,18 @@ arch:
   - armv7
   - aarch64
 ports:
-  8088/tcp: 8088
+  8188/tcp: 8188
 ports_description:
-  8088/tcp: "Convergence API (REST + SSE)"
+  8188/tcp: "Convergence API (REST + SSE)"
 options:
   github_token: ""
   cards_repo: "GaretAnderson/thread-board-cards"
   relay_max_messages: 500
+  relay_token: ""
+  relay_token_grace_hours: 24
 schema:
   github_token: str
   cards_repo: str
   relay_max_messages: int
+  relay_token: password
+  relay_token_grace_hours: int
