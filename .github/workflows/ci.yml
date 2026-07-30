@@ -79,13 +79,13 @@ jobs:
         run: |
           docker run -d --name convergence-api-ci \
             -v /tmp/addon-data:/data \
-            -p 8188:8188 -p 8099:8099 \
+            -p 8088:8088 -p 8099:8099 \
             convergence-api:ci
 
-      - name: Wait for the container to bind 8188 and answer /api/health
+      - name: Wait for the container to bind 8088 and answer /api/health
         run: |
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8188/api/health; then
+            if curl -fsS http://127.0.0.1:8088/api/health; then
               echo
               echo "OK: /api/health responded"
               exit 0
@@ -102,13 +102,13 @@ jobs:
       - name: Assert relay auth is actually wired up with the configured token
         run: |
           # Fail-closed check: no token supplied must be rejected (401, not connection-refused).
-          status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8188/relay/ci-smoke-test)
+          status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8088/relay/ci-smoke-test)
           if [ "$status" != "401" ] && [ "$status" != "200" ]; then
             echo "FAIL: unexpected status $status from /relay without a token"
             exit 1
           fi
           # The configured relay_token must be accepted.
-          curl -fsS -X POST http://127.0.0.1:8188/relay/ci-smoke-test \
+          curl -fsS -X POST http://127.0.0.1:8088/relay/ci-smoke-test \
             -H "Authorization: ${AUTH_SCHEME} ${RELAY_TOKEN_FOR_TEST}" \
             -H 'Content-Type: application/json' \
             -d '{"from":"ci","to":["ci"],"body":"smoke test"}'
@@ -145,13 +145,13 @@ jobs:
       - name: docker run (no /data mounted — exercises the missing-options.json fallback)
         run: |
           docker run -d --name convergence-api-ci-no-options \
-            -p 8188:8188 -p 8099:8099 \
+            -p 8088:8088 -p 8099:8099 \
             convergence-api:ci-no-options
 
-      - name: Wait for the container to bind 8188 and answer /api/health
+      - name: Wait for the container to bind 8088 and answer /api/health
         run: |
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8188/api/health; then
+            if curl -fsS http://127.0.0.1:8088/api/health; then
               echo
               echo "OK: /api/health responded"
               exit 0
@@ -211,14 +211,14 @@ jobs:
         run: |
           docker run -d --name convergence-api-ci-lowmem \
             -v /tmp/addon-data-lowmem:/data \
-            -p 8188:8188 \
+            -p 8088:8088 \
             --memory=128m --memory-swap=128m \
             convergence-api:ci-lowmem
 
-      - name: Wait for the container to bind 8188 and answer /api/health
+      - name: Wait for the container to bind 8088 and answer /api/health
         run: |
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8188/api/health; then
+            if curl -fsS http://127.0.0.1:8088/api/health; then
               echo
               echo "OK: /api/health responded under a 128MB memory limit"
               exit 0

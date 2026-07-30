@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test:unit": "node tests/receipts.unit.js"
+    "test": "npm run test:unit && node --test tests/render.test.js tests/auth.test.js tests/addressing.test.js && npm run test:smoke",
+    "test:unit": "node tests/receipts.unit.js",
+    "test:smoke": "node --test tests/smoke.test.js"
   },
   "dependencies": {
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "marked": "^4.3.0",
+    "sanitize-html": "^2.17.5"
   }
 }

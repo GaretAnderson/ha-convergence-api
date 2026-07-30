@@ -1,5 +1,36 @@
+'use strict';
+
+const fsSync = require('fs');
+
+// ─── Boot-crash hardening (issue #34, kept per #43) ─────────────────────────
+// A prior release crashed on startup with *empty logs* — the container
+// exited before anything reached the log, so root cause could never be
+// pinned down. These handlers make that class of failure structurally
+// impossible: any uncaught throw or rejection anywhere in the process
+// (including at require()/module-init time, before app.listen()) is written
+// *synchronously* to fd 2 with `fs.writeSync` — bypassing Node's normal
+// async stdio stream, which can be buffered and lost if the process exits
+// before it flushes — and then exits non-zero. A boot crash can now never be
+// silent again.
+function logFatal(context, err) {
+  const msg = `[fatal] ${context}: ${err && err.stack ? err.stack : err}\n`;
+  try { fsSync.writeSync(2, msg); } catch { /* fd 2 unavailable; nothing more we can do */ }
+}
+
+process.on('uncaughtException', (err) => {
+  logFatal('uncaughtException', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logFatal('unhandledRejection', reason);
+  process.exit(1);
+});
+
 const express = require('express');
+const { renderMessageHtml } = require('./render.js');
 const app = express();
+// Keep the proven-live port mapping (issue #43) — do NOT switch to 8188.
 const PORT = 8088;
 // Ingress uses a separate internal port so the published relay port (8088, used
 // by CLI tools + HA rest_command) doesn't collide with ingress_port — that
@@ -12,8 +43,15 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.7.0' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.4' });
 });
+
+// ─── Relay auth (issue #43) ──────────────────────────────────────────────────
+// Auth enforcement is intentionally NOT wired here — the live relay is open
+// (no token required) today, and shipping markdown rendering must not change
+// that security posture. `auth.js` exists and is unit-tested for a future,
+// separately-reviewed change that adds real enforcement; it stays unused by
+// server.js until that change ships.
 
 // ─── File Upload + Serving ───────────────────────────────────────────────────
 
@@ -114,12 +152,17 @@ setInterval(() => {
 // POST /relay/:topic — publish a message
 app.post('/relay/:topic', (req, res) => {
   const topic = getTopic(req.params.topic);
+  const body = req.body.body || '';
   const msg = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     timestamp: new Date().toISOString(),
     from: req.body.from || 'unknown',
     to: req.body.to || null,
-    body: req.body.body || '',
+    body,
+    // Sanitized markdown rendering of `body` (issue #43), safe to insert via
+    // innerHTML. Computed once at publish time so every consumer (poll, SSE,
+    // /chat) gets identical rendering without re-parsing markdown client-side.
+    bodyHtml: renderMessageHtml(body),
     attachments: Array.isArray(req.body.attachments) ? req.body.attachments : [],
     replyTo: req.body.replyTo || null,
     metadata: req.body.metadata || {},
@@ -267,7 +310,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  /api/health       — health check`);
   console.log(`  /relay/:topic     — publish (POST) / poll (GET)`);
   console.log(`  /relay/:topic/stream — SSE subscribe`);
+  console.log(`  /chat             — Agent Chat web UI (renders sanitized markdown)`);
   console.log(`  Relay max messages per topic: ${RELAY_MAX}`);
+  console.log(`  Relay auth: OPEN (no relay_token enforcement — see issue #43)`);
+}).on('error', (err) => {
+  logFatal(`failed to bind relay port ${PORT}`, err);
+  process.exit(1);
 });
 
 // Second listener for Home Assistant ingress (sidebar panel). Same app, distinct
@@ -275,5 +323,8 @@ app.listen(PORT, '0.0.0.0', () => {
 if (INGRESS_PORT && INGRESS_PORT !== PORT) {
   app.listen(INGRESS_PORT, '0.0.0.0', () => {
     console.log(`Ingress (HA sidebar) listening on port ${INGRESS_PORT}`);
+  }).on('error', (err) => {
+    logFatal(`failed to bind ingress port ${INGRESS_PORT}`, err);
+    process.exit(1);
   });
 }

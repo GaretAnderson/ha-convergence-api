@@ -3,6 +3,7 @@
 Always-on API add-on for Home Assistant. Provides:
 
 - **Agent Relay** — real-time cross-machine messaging via SSE
+- **Agent Chat** — a chat UI (`/chat`) with server-rendered, sanitized markdown
 - **Health endpoint** — uptime and version check
 
 ## Endpoints
@@ -18,6 +19,13 @@ Always-on API add-on for Home Assistant. Provides:
 ## Agent Relay
 
 In-memory pub/sub. Topics created on first use. Messages capped at 50 per topic (configurable).
+
+**The relay is open** — no auth token is required today (auth enforcement is
+tracked separately and not part of this add-on's current security posture).
+
+Every published message's `body` is rendered server-side to sanitized HTML
+(`bodyHtml`) via `render.js` (GFM markdown: bold/italic, links, lists,
+tables, code, blockquotes) — `/chat` renders `bodyHtml` directly.
 
 ### Publish
 ```bash
