@@ -157,11 +157,15 @@ function buildMessageEl(msg) {
   const addUrl = (u) => { if (!seenUrls.has(u)) { seenUrls.add(u); urls.push(u); } };
   if (Array.isArray(msg.attachments)) msg.attachments.forEach(addUrl);
   text = text.replace(/\[image: (\/files\/\S+)\]/g, (_m, u) => { addUrl(u); return ''; });
+  // `bodyHtml` is computed server-side (render.js): sanitized markdown, safe
+  // to insert via innerHTML. Fall back to an escaped plain-text paragraph for
+  // older persisted messages that predate it.
+  const bodyHtml = msg.bodyHtml || (text.trim() ? `<p>${escapeHtml(text.trim())}</p>` : '');
   const time = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
 
   div.innerHTML =
     (sent ? '' : `<div class="from">${escapeHtml(msg.from)}</div>`) +
-    (text.trim() ? `<span class="text">${escapeHtml(text.trim())}</span>` : '') +
+    (bodyHtml ? `<div class="text">${bodyHtml}</div>` : '') +
     urls.map(imgTag).join('') +
     `<div class="time">${time}${sent ? ticksSpan(msg) : ''}</div>` +
     `<button class="del" title="Delete message">&times;</button>`;
