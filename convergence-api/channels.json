@@ -1,0 +1,63 @@
+{
+  "$schema": "garets-config#1051 purpose-channel registry v1",
+  "generatedAt": "2026-08-07T14:55:05.9242991Z",
+  "channels": [
+    {
+      "id": "helper",
+      "label": "Helper",
+      "domain": "shared",
+      "enabledByDefault": true,
+      "ingestionPolicy": "shared",
+      "handles": [
+        "garets-helper@aorus",
+        "garets-helper@laptop"
+      ],
+      "aliases": [
+        "@aorus",
+        "@laptop"
+      ]
+    },
+    {
+      "id": "tutor",
+      "label": "Tutor",
+      "domain": "shared",
+      "enabledByDefault": true,
+      "ingestionPolicy": "shared",
+      "handles": [
+        "tutor"
+      ],
+      "aliases": []
+    },
+    {
+      "id": "advisor",
+      "label": "Advisor",
+      "domain": "work",
+      "enabledByDefault": true,
+      "ingestionPolicy": "work-gated",
+      "handles": [
+        "advisor"
+      ],
+      "aliases": []
+    },
+    {
+      "id": "threads",
+      "label": "Threads",
+      "domain": "shared",
+      "enabledByDefault": true,
+      "ingestionPolicy": "shared",
+      "handles": [],
+      "aliases": []
+    },
+    {
+      "id": "guru",
+      "label": "Guru",
+      "domain": "life",
+      "enabledByDefault": false,
+      "ingestionPolicy": "none",
+      "handles": [
+        "guru"
+      ],
+      "aliases": []
+    }
+  ]
+}
