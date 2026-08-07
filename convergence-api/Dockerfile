@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json /app/
 RUN npm ci --omit=dev
 
-COPY server.js chat.html render.js /app/
+COPY server.js chat.html render.js channels.js channels.json history.js /app/
 COPY run.sh /run.sh
 # Belt-and-suspenders for issue #34: `.gitattributes` (`*.sh text eol=lf`) is
 # the real fix — it guarantees `run.sh` is always checked out with LF, on any
