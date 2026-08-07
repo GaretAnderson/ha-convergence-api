@@ -45,7 +45,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.4' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.5' });
 });
 
 // ─── Relay auth (issue #43) ──────────────────────────────────────────────────
