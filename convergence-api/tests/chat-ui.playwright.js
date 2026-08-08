@@ -174,3 +174,74 @@ test('channel tab header hides on scroll-down and reveals on scroll-up', async (
     await page.close();
   });
 });
+
+test('channel selector is tab-first (branded garets-chat tab + channel tabs, no checkbox row) — issue #46', async () => {
+  await withServerAndPage(async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`http://127.0.0.1:${PORT}/chat`);
+    await page.waitForSelector('#channel-tabs button');
+
+    // Rebrand: title + header read "garets-chat", not "Agent Chat".
+    assert.equal(await page.title(), 'garets-chat', 'document title must read garets-chat');
+    const headerText = await page.$eval('#chat-header h1', (el) => el.textContent.trim());
+    assert.equal(headerText, 'garets-chat', 'header must read garets-chat');
+
+    // Branded primary tab is first and active by default (home view).
+    const brand = await page.$eval('#channel-tabs button.brand', (el) => ({
+      text: el.textContent.trim(), active: el.classList.contains('active')
+    }));
+    assert.equal(brand.text, 'garets-chat', 'first tab must be the branded garets-chat tab');
+    assert.equal(brand.active, true, 'garets-chat tab must be active on load');
+
+    // Per-channel tabs render as buttons in the primary row (helper/tutor/...).
+    const tabLabels = await page.$$eval('#channel-tabs button[data-id]', (els) =>
+      els.map((e) => e.textContent.trim()));
+    assert.ok(tabLabels.some((t) => /helper/i.test(t)), 'helper must be a tab');
+    assert.ok(tabLabels.some((t) => /tutor/i.test(t)), 'tutor must be a tab');
+
+    // The primary row must NOT contain checkbox inputs (the old bug).
+    const primaryCheckboxes = await page.$$eval('#channel-tabs input[type=checkbox]', (els) => els.length);
+    assert.equal(primaryCheckboxes, 0, 'primary tab row must have no checkboxes');
+
+    // An overflow "…" tab exists and opens the secondary manage affordance.
+    const overflow = await page.$('#channel-tabs button.overflow');
+    assert.ok(overflow, 'an overflow "…" tab must exist');
+    let manageOpen = await page.$eval('#channel-manage', (el) => el.classList.contains('open'));
+    assert.equal(manageOpen, false, 'manage panel is hidden until overflow is clicked');
+    // Reveal the tab bar (seeded backlog auto-scrolls to bottom -> header collapses).
+    await page.$eval('#messages', (el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await page.waitForTimeout(50);
+    await overflow.click();
+    manageOpen = await page.$eval('#channel-manage', (el) => el.classList.contains('open'));
+    assert.equal(manageOpen, true, 'overflow click reveals the manage panel');
+
+    // Enable/disable checkboxes live in the secondary manage panel, not the tabs.
+    const manageCheckboxes = await page.$$eval('#channel-manage input[type=checkbox]', (els) => els.length);
+    assert.ok(manageCheckboxes >= 1, 'per-channel enable/disable checkboxes live in the manage panel');
+
+    await page.close();
+  });
+});
+
+test('guru is domain-gated (life) — not shown as a normal shared tab by default — issue #46', async () => {
+  await withServerAndPage(async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`http://127.0.0.1:${PORT}/chat`);
+    await page.waitForSelector('#channel-tabs button');
+
+    const tabIds = await page.$$eval('#channel-tabs button[data-id]', (els) =>
+      els.map((e) => e.getAttribute('data-id')));
+    assert.ok(!tabIds.includes('guru'), 'guru (life domain) must not appear as a default tab');
+
+    // It is present in the manage panel (so it can be explicitly enabled).
+    await page.$eval('#messages', (el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await page.waitForTimeout(50);
+    await page.click('#channel-tabs button.overflow');
+    const guruManage = await page.$('#channel-manage input[data-manage-id="guru"]');
+    assert.ok(guruManage, 'guru is available in the manage panel (gated, opt-in)');
+    const guruChecked = await page.$eval('#channel-manage input[data-manage-id="guru"]', (el) => el.checked);
+    assert.equal(guruChecked, false, 'guru must be disabled by default (fail-closed, local-only)');
+
+    await page.close();
+  });
+});

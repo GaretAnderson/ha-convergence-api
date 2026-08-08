@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agent Chat</title>
+<title>garets-chat</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1a1a2e">
 <style>
@@ -54,12 +54,26 @@ header .status { font-size: 12px; color: #4ecca3; }
 #channel-tabs.collapsed { transform: translateY(-100%); opacity: 0; pointer-events: none; }
 #channel-tabs button { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
 #channel-tabs button.active { background: #4ecca3; color: #1a1a2e; }
+/* Branded primary tab (issue #46): garets-chat is the app "home" tab —
+   heavier weight + solid border so it reads as the branded, primary entry
+   that the mockup shows leftmost. */
+#channel-tabs button.brand { font-weight: 700; letter-spacing: .2px; border-width: 2px; }
+/* "…" overflow tab opens the secondary channel-manage affordance (enable/
+   disable + full-history), keeping the primary row tab-first per the mockup. */
+#channel-tabs button.overflow { font-weight: 700; padding: 4px 12px; border-color: #9fb0c9; color: #9fb0c9; }
+#channel-tabs button.overflow.open { background: #9fb0c9; color: #1a1a2e; }
 #channel-tabs button .domain-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 #channel-tabs button .domain-dot.life { background: #e94560; }
 #channel-tabs button .domain-dot.work { background: #f2b134; }
 #channel-tabs button .domain-dot.shared { background: #4ecca3; }
-#channel-manage { padding: 4px 16px 8px; background: #0f3460; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 11px; color: #9fb0c9; }
+/* Secondary "manage" affordance (issue #46): hidden until the "…" overflow
+   tab is clicked. Holds per-channel enable/disable + load-full-history, so the
+   primary tab row stays clean and tab-first (not a checkbox row). */
+#channel-manage { display: none; padding: 6px 16px 8px; background: #0f3460; border-top: 1px solid #16213e; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 11px; color: #9fb0c9; }
+#channel-manage.open { display: flex; }
+#channel-manage .manage-title { font-weight: 600; color: #cdd8e6; margin-right: 4px; }
 #channel-manage label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#channel-manage #load-history-inline { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 11px; cursor: pointer; }
 #load-history-btn { align-self: center; margin: 8px auto; padding: 8px 14px; border-radius: 14px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; }
 /* Paged history: top loader, jump-to-latest pill, subtle message entrance */
 .load-older { align-self: center; padding: 10px 0; display: flex; }
@@ -75,7 +89,7 @@ header .status { font-size: 12px; color: #4ecca3; }
 <body>
 <div id="chat-header">
   <header>
-    <h1>Agent Chat</h1>
+    <h1>garets-chat</h1>
     <span class="status" id="status">connecting...</span>
   </header>
   <div id="channel-tabs"></div>
@@ -110,24 +124,52 @@ function domainDot(domain) { return `<span class="domain-dot ${escapeHtml(domain
 function renderChannelTabs() {
   const bar = document.getElementById('channel-tabs');
   const visible = channels.filter(c => c.enabled);
-  bar.innerHTML = visible.map(c =>
+  const manageOpen = document.getElementById('channel-manage').classList.contains('open');
+  // Branded primary "garets-chat" tab (home / broadcast view) is always first
+  // and is active whenever no specific channel is selected (issue #46 mockup).
+  let html = `<button class="brand ${currentChannel ? '' : 'active'}" data-home="1">garets-chat</button>`;
+  html += visible.map(c =>
     `<button data-id="${escapeHtml(c.id)}" class="${c.id === (currentChannel && currentChannel.id) ? 'active' : ''}">${domainDot(c.domain)}${escapeHtml(c.label)}</button>`
-  ).join('') + `<button id="load-history-inline" title="Load full history">⟳ history</button>`;
+  ).join('');
+  // "…" overflow opens the secondary manage affordance (enable/disable + history).
+  html += `<button class="overflow ${manageOpen ? 'open' : ''}" data-overflow="1" title="Manage channels & history" aria-label="More channels">…</button>`;
+  bar.innerHTML = html;
+  bar.querySelector('[data-home]').addEventListener('click', () => selectHome());
   bar.querySelectorAll('button[data-id]').forEach(btn => {
     btn.addEventListener('click', () => selectChannel(btn.dataset.id));
+  });
+  bar.querySelector('[data-overflow]').addEventListener('click', () => toggleManage());
+}
+
+function renderChannelManage() {
+  const panel = document.getElementById('channel-manage');
+  const checks = channels.map(c =>
+    `<label><input type="checkbox" data-manage-id="${escapeHtml(c.id)}" ${c.enabled ? 'checked' : ''}> ${escapeHtml(c.label)} (${escapeHtml(c.domain)})</label>`
+  ).join('');
+  panel.innerHTML = `<span class="manage-title">Channels</span>${checks}<button id="load-history-inline" title="Load full history for the active channel">⟳ history</button>`;
+  panel.querySelectorAll('input[data-manage-id]').forEach(cb => {
+    cb.addEventListener('change', () => setChannelEnabled(cb.dataset.manageId, cb.checked));
   });
   const histBtn = document.getElementById('load-history-inline');
   if (histBtn) histBtn.addEventListener('click', () => loadFullHistory());
 }
 
-function renderChannelManage() {
-  const panel = document.getElementById('channel-manage');
-  panel.innerHTML = channels.map(c =>
-    `<label><input type="checkbox" data-manage-id="${escapeHtml(c.id)}" ${c.enabled ? 'checked' : ''}> ${escapeHtml(c.label)} (${escapeHtml(c.domain)})</label>`
-  ).join('');
-  panel.querySelectorAll('input[data-manage-id]').forEach(cb => {
-    cb.addEventListener('change', () => setChannelEnabled(cb.dataset.manageId, cb.checked));
-  });
+// The "…" overflow tab toggles the secondary manage affordance (issue #46).
+function toggleManage() {
+  document.getElementById('channel-manage').classList.toggle('open');
+  renderChannelTabs();
+}
+function closeManage() {
+  document.getElementById('channel-manage').classList.remove('open');
+}
+
+// garets-chat "home" tab: the branded default/broadcast view (no channel-scoped
+// `to`), matching the mockup's active primary tab.
+function selectHome() {
+  currentChannel = null;
+  currentTo = null;
+  closeManage();
+  renderChannelTabs();
 }
 
 async function setChannelEnabled(id, enabled) {
@@ -153,6 +195,7 @@ function selectChannel(id) {
   if (!c) return;
   currentChannel = c;
   currentTo = (c.handles && c.handles.length ? c.handles : c.aliases) || [c.id];
+  closeManage();
   renderChannelTabs();
 }
 
@@ -170,8 +213,10 @@ async function loadChannels() {
       { id: 'guru', label: 'Guru', domain: 'life', enabled: false, aliases: [] }
     ];
   }
-  const firstEnabled = channels.find(c => c.enabled) || channels[0];
-  if (firstEnabled) selectChannel(firstEnabled.id);
+  // Default landing is the branded garets-chat "home" tab (broadcast view),
+  // matching the mockup's active primary tab — not a channel auto-selection.
+  currentChannel = null;
+  currentTo = null;
   renderChannelTabs();
   renderChannelManage();
 }
