@@ -8,6 +8,47 @@ Always-on API add-on for Home Assistant. Provides:
   guru disabled/local-only by default — garets-config#1051)
 - **Health endpoint** — uptime and version check
 
+## Local development
+
+Run the whole thing on your machine — server + a single **echo responder** — to
+validate the garets-chat look and live behavior before pushing to HAOS. You
+won't have the full multi-agent prod deployment, but the responder replies to
+whatever you send so you can exercise the real send/receive path:
+
+```bash
+cd convergence-api
+npm install        # first time only (installs dev deps too)
+npm run dev        # boots server.js on :8088 + the echo responder
+```
+
+Then open **http://127.0.0.1:8088/chat** (the script tries to open it for you).
+
+The echo responder subscribes to the `agent-relay` topic over SSE and, for every
+message you send:
+
+- posts a **delivery + read receipt** as the addressed agent (the inline receipt
+  name lights up teal — proves the receipt path), and
+- **replies** with a markdown message that echoes your text and reports the `to`
+  it was addressed with — so you can confirm each channel tab wires `to`
+  correctly and that server-side markdown rendering works.
+
+It answers as the agent implied by the active tab's `to` (helper / tutor /
+advisor / threads), so switching tabs feels like talking to different agents.
+**guru stays gated** (life-domain — shown as a disabled outline pill, never
+networked). This lets you verify the pill bar, sending/receiving, receipts,
+markdown, the collapsing header, and
+the sticky composer — all locally. `Ctrl+C` stops the server and responder.
+
+> Relay state persists between dev runs under `convergence-api/.dev-data/`
+> (gitignored). Delete it to start from an empty transcript. Note: `server.js`
+> binds port **8088** by hard-code, so free that port first if it's in use.
+
+Run the browser (Playwright) UI checks with:
+
+```bash
+npm run test:gui   # real Chromium: rebrand, pills-only bar, select/toggle, collapse, composer
+```
+
 ## Endpoints
 
 | Method | Path | Description |
