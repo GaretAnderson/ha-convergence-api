@@ -11,7 +11,6 @@
 body { font-family: -apple-system, system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; flex-direction: column; }
 header { padding: 12px 16px; background: #16213e; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 8px; }
 header h1 { font-size: 16px; font-weight: 600; }
-header .status { font-size: 12px; color: #4ecca3; }
 #messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4; position: relative; word-break: break-word; }
 .msg.sent { align-self: flex-end; background: #0f3460; color: #fff; }
@@ -46,34 +45,31 @@ header .status { font-size: 12px; color: #4ecca3; }
 #input-bar input:focus { border-color: #4ecca3; }
 #input-bar button { padding: 10px 18px; border-radius: 20px; border: none; background: #4ecca3; color: #1a1a2e; font-weight: 600; font-size: 14px; cursor: pointer; }
 #input-bar button:active { opacity: 0.8; }
-/* Channel tab header (garets-config#1051): hides on scroll-down, reveals on
-   scroll-up. Registry-driven — replaces the old @aorus/@laptop/@all addressing
-   bar. transform (not display:none) keeps the transition smooth and layout
-   stable, and lets a scripted/DOM test read the collapsed state reliably. */
-#channel-tabs { padding: 8px 16px; background: #0f3460; display: flex; gap: 6px; overflow-x: auto; border-top: 1px solid #16213e; transition: transform .18s ease, opacity .18s ease; transform: translateY(0); opacity: 1; }
+/* Single top bar (issue #46): the brand "garets-chat" + a connection dot sit on
+   the SAME row as the channel pills — one control, no separate checkbox panel.
+   Hides on scroll-down, reveals on scroll-up (garets-config#1051). transform
+   (not display:none) keeps the transition smooth, layout stable, and lets a
+   scripted/DOM test read the collapsed state reliably. */
+#channel-tabs { padding: 8px 16px; background: #0f3460; display: flex; align-items: center; gap: 8px; overflow-x: auto; border-bottom: 1px solid #16213e; transition: transform .18s ease, opacity .18s ease; transform: translateY(0); opacity: 1; }
 #channel-tabs.collapsed { transform: translateY(-100%); opacity: 0; pointer-events: none; }
-#channel-tabs button { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
-#channel-tabs button.active { background: #4ecca3; color: #1a1a2e; }
-/* Branded primary tab (issue #46): garets-chat is the app "home" tab —
-   heavier weight + solid border so it reads as the branded, primary entry
-   that the mockup shows leftmost. */
-#channel-tabs button.brand { font-weight: 700; letter-spacing: .2px; border-width: 2px; }
-/* "…" overflow tab opens the secondary channel-manage affordance (enable/
-   disable + full-history), keeping the primary row tab-first per the mockup. */
-#channel-tabs button.overflow { font-weight: 700; padding: 4px 12px; border-color: #9fb0c9; color: #9fb0c9; }
-#channel-tabs button.overflow.open { background: #9fb0c9; color: #1a1a2e; }
-#channel-tabs button .domain-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
-#channel-tabs button .domain-dot.life { background: #e94560; }
-#channel-tabs button .domain-dot.work { background: #f2b134; }
-#channel-tabs button .domain-dot.shared { background: #4ecca3; }
-/* Secondary "manage" affordance (issue #46): hidden until the "…" overflow
-   tab is clicked. Holds per-channel enable/disable + load-full-history, so the
-   primary tab row stays clean and tab-first (not a checkbox row). */
-#channel-manage { display: none; padding: 6px 16px 8px; background: #0f3460; border-top: 1px solid #16213e; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 11px; color: #9fb0c9; }
-#channel-manage.open { display: flex; }
-#channel-manage .manage-title { font-weight: 600; color: #cdd8e6; margin-right: 4px; }
-#channel-manage label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-#channel-manage #load-history-inline { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 11px; cursor: pointer; }
+/* Brand doubles as the "home"/broadcast button. Active (underlined) when no
+   channel is selected. The connection dot is the title's status indicator. */
+#channel-tabs h1.brand { font-size: 16px; font-weight: 700; color: #fff; white-space: nowrap; flex: 0 0 auto; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+#channel-tabs h1.brand.active { text-decoration: underline; text-underline-offset: 4px; text-decoration-color: #4ecca3; }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #7a8aa0; }
+.conn-dot.online { background: #4ecca3; box-shadow: 0 0 6px #4ecca3; }
+.conn-dot.connecting { background: #f2b134; }
+.conn-dot.reconnecting { background: #e94560; }
+/* Channel pills: ALWAYS shown. Solid when enabled, outline when disabled.
+   Click toggles/selects (see onPillClick). The dot shows responder availability. */
+#channel-tabs button.pill { padding: 5px 12px; border-radius: 14px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 13px; cursor: pointer; white-space: nowrap; flex: 0 0 auto; display: flex; align-items: center; gap: 6px; opacity: 1; }
+#channel-tabs button.pill.disabled { border-color: #4a5a72; color: #8091a8; }
+#channel-tabs button.pill.enabled { background: #4ecca3; color: #10202f; border-color: #4ecca3; font-weight: 600; }
+#channel-tabs button.pill.active { box-shadow: 0 0 0 2px #1a1a2e, 0 0 0 4px #4ecca3; }
+#channel-tabs button.pill .avail { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: #6b7a90; flex: 0 0 auto; }
+#channel-tabs button.pill .avail.online { background: #38d39f; box-shadow: 0 0 5px #38d39f; }
+#channel-tabs button.pill.enabled .avail.offline { background: #10202f; opacity: .45; }
+#channel-tabs button.icon-btn { margin-left: auto; flex: 0 0 auto; padding: 5px 10px; border-radius: 14px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 13px; cursor: pointer; }
 #load-history-btn { align-self: center; margin: 8px auto; padding: 8px 14px; border-radius: 14px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; }
 /* Paged history: top loader, jump-to-latest pill, subtle message entrance */
 .load-older { align-self: center; padding: 10px 0; display: flex; }
@@ -88,12 +84,7 @@ header .status { font-size: 12px; color: #4ecca3; }
 </head>
 <body>
 <div id="chat-header">
-  <header>
-    <h1>garets-chat</h1>
-    <span class="status" id="status">connecting...</span>
-  </header>
   <div id="channel-tabs"></div>
-  <div id="channel-manage"></div>
 </div>
 <div id="messages"></div>
 <button id="jump-latest">↓ Latest</button>
@@ -114,61 +105,101 @@ let channels = [];               // registry-driven purpose-channels (garets-con
 let currentChannel = null;       // active channel object
 let currentTo = null;            // resolved `to` for send() — channel handles+aliases
 
-// ─── Purpose-channels (garets-config#1051 v1) ───────────────────────────────
-// Replaces the old @aorus/@laptop/@all addressing bar with registry-driven
-// channel tabs. Guru ships disabled by default (life-domain, local-only,
-// never ingested) and is not shown unless explicitly enabled via manage panel.
+// ─── Purpose-channels (garets-config#1051 v1; issue #46 pill bar) ────────────
+// Registry-driven channel PILLS on one row with the brand + connection dot.
+// A single control: pills always appear — SOLID when enabled, OUTLINE when
+// disabled (replaces the old checkbox panel). Each pill's dot shows RESPONDER
+// AVAILABILITY (green when that channel's responder was seen on the relay
+// recently). Domain awareness is preserved (guru = life, gated: disabled by
+// default and never networked server-side); domain shows in the pill tooltip.
 
-function domainDot(domain) { return `<span class="domain-dot ${escapeHtml(domain)}" title="${escapeHtml(domain)} domain"></span>`; }
+// Responder-availability presence, derived honestly from live relay traffic:
+// when a message or read-receipt arrives from a handle belonging to a channel,
+// that channel is "online" for PRESENCE_TTL. No presence backend is assumed.
+const presence = {};                 // channelId -> last-seen epoch ms
+const PRESENCE_TTL = 90 * 1000;
+function isOnline(id) { const t = presence[id]; return !!t && (Date.now() - t) < PRESENCE_TTL; }
+function channelForHandle(handle) {
+  const h = String(handle || '').toLowerCase();
+  if (!h) return null;
+  return channels.find(c =>
+    h.includes(String(c.id).toLowerCase()) ||
+    (c.label && h.includes(String(c.label).toLowerCase())) ||
+    (Array.isArray(c.aliases) && c.aliases.some(a => h.includes(String(a).replace(/^@/, '').toLowerCase())))
+  ) || null;
+}
+function notePresence(handle) {
+  const c = channelForHandle(handle);
+  if (c) { presence[c.id] = Date.now(); refreshAvailabilityDots(); }
+}
+function refreshAvailabilityDots() {
+  channels.forEach(c => {
+    const dot = document.querySelector(`#channel-tabs button[data-id="${c.id}"] .avail`);
+    if (!dot) return;
+    const on = isOnline(c.id);
+    dot.classList.toggle('online', on);
+    dot.classList.toggle('offline', !on);
+  });
+}
+setInterval(refreshAvailabilityDots, 20000);   // expire stale dots
+
+// Connection dot on the brand = relay/SSE status (issue #46 "dot indicator").
+let connState = 'connecting';
+function setConn(state) {
+  connState = state;
+  const dot = document.getElementById('conn-dot');
+  if (dot) { dot.className = `conn-dot ${state}`; dot.title = `relay ${state}`; }
+}
+
+function availDot(c) {
+  const on = isOnline(c.id);
+  return `<span class="avail ${on ? 'online' : 'offline'}" title="${on ? 'responder available' : 'no responder seen'}"></span>`;
+}
 
 function renderChannelTabs() {
   const bar = document.getElementById('channel-tabs');
-  const visible = channels.filter(c => c.enabled);
-  const manageOpen = document.getElementById('channel-manage').classList.contains('open');
-  // Branded primary "garets-chat" tab (home / broadcast view) is always first
-  // and is active whenever no specific channel is selected (issue #46 mockup).
-  let html = `<button class="brand ${currentChannel ? '' : 'active'}" data-home="1">garets-chat</button>`;
-  html += visible.map(c =>
-    `<button data-id="${escapeHtml(c.id)}" class="${c.id === (currentChannel && currentChannel.id) ? 'active' : ''}">${domainDot(c.domain)}${escapeHtml(c.label)}</button>`
-  ).join('');
-  // "…" overflow opens the secondary manage affordance (enable/disable + history).
-  html += `<button class="overflow ${manageOpen ? 'open' : ''}" data-overflow="1" title="Manage channels & history" aria-label="More channels">…</button>`;
+  // Brand "garets-chat" + connection dot; brand is the home/broadcast button
+  // and is active (underlined) whenever no channel is selected.
+  let html = `<h1 class="brand ${currentChannel ? '' : 'active'}" id="brand" title="garets-chat — home / broadcast">garets-chat<span id="conn-dot" class="conn-dot ${connState}" title="relay ${connState}"></span></h1>`;
+  // One pill per channel — always present; solid=enabled, outline=disabled.
+  html += channels.map(c => {
+    const cls = ['pill', c.enabled ? 'enabled' : 'disabled',
+      (currentChannel && currentChannel.id === c.id) ? 'active' : ''].join(' ').trim();
+    const tip = `${escapeHtml(c.label)} · ${escapeHtml(c.domain)} domain${c.enabled ? '' : ' · disabled'}`;
+    return `<button class="${cls}" data-id="${escapeHtml(c.id)}" title="${tip}">${availDot(c)}${escapeHtml(c.label)}</button>`;
+  }).join('');
+  html += `<button class="icon-btn" id="load-history-inline" title="Load full history for the active channel">⟳</button>`;
   bar.innerHTML = html;
-  bar.querySelector('[data-home]').addEventListener('click', () => selectHome());
+  bar.querySelector('#brand').addEventListener('click', () => selectHome());
   bar.querySelectorAll('button[data-id]').forEach(btn => {
-    btn.addEventListener('click', () => selectChannel(btn.dataset.id));
+    btn.addEventListener('click', () => onPillClick(btn.dataset.id));
   });
-  bar.querySelector('[data-overflow]').addEventListener('click', () => toggleManage());
+  bar.querySelector('#load-history-inline').addEventListener('click', () => loadFullHistory());
 }
 
-function renderChannelManage() {
-  const panel = document.getElementById('channel-manage');
-  const checks = channels.map(c =>
-    `<label><input type="checkbox" data-manage-id="${escapeHtml(c.id)}" ${c.enabled ? 'checked' : ''}> ${escapeHtml(c.label)} (${escapeHtml(c.domain)})</label>`
-  ).join('');
-  panel.innerHTML = `<span class="manage-title">Channels</span>${checks}<button id="load-history-inline" title="Load full history for the active channel">⟳ history</button>`;
-  panel.querySelectorAll('input[data-manage-id]').forEach(cb => {
-    cb.addEventListener('change', () => setChannelEnabled(cb.dataset.manageId, cb.checked));
-  });
-  const histBtn = document.getElementById('load-history-inline');
-  if (histBtn) histBtn.addEventListener('click', () => loadFullHistory());
+// Pill click folds selection + enable/disable into one control:
+//   disabled pill        -> enable it AND make it active
+//   enabled, not active  -> just switch the active channel
+//   enabled AND active   -> disable it (toggle off), fall back to home
+function onPillClick(id) {
+  const c = channels.find(x => x.id === id);
+  if (!c) return;
+  const isActive = currentChannel && currentChannel.id === id;
+  if (!c.enabled) {
+    setChannelEnabled(id, true);
+    selectChannel(id);
+  } else if (!isActive) {
+    selectChannel(id);
+  } else {
+    setChannelEnabled(id, false);
+    selectHome();
+  }
 }
 
-// The "…" overflow tab toggles the secondary manage affordance (issue #46).
-function toggleManage() {
-  document.getElementById('channel-manage').classList.toggle('open');
-  renderChannelTabs();
-}
-function closeManage() {
-  document.getElementById('channel-manage').classList.remove('open');
-}
-
-// garets-chat "home" tab: the branded default/broadcast view (no channel-scoped
-// `to`), matching the mockup's active primary tab.
+// garets-chat "home": the branded default/broadcast view (no channel-scoped `to`).
 function selectHome() {
   currentChannel = null;
   currentTo = null;
-  closeManage();
   renderChannelTabs();
 }
 
@@ -183,11 +214,10 @@ async function setChannelEnabled(id, enabled) {
   const c = channels.find(x => x.id === id);
   if (c) c.enabled = enabled;
   if (!enabled && currentChannel && currentChannel.id === id) {
-    const next = channels.find(x => x.enabled);
-    if (next) selectChannel(next.id);
+    currentChannel = null;
+    currentTo = null;
   }
   renderChannelTabs();
-  renderChannelManage();
 }
 
 function selectChannel(id) {
@@ -195,7 +225,6 @@ function selectChannel(id) {
   if (!c) return;
   currentChannel = c;
   currentTo = (c.handles && c.handles.length ? c.handles : c.aliases) || [c.id];
-  closeManage();
   renderChannelTabs();
 }
 
@@ -204,7 +233,7 @@ async function loadChannels() {
     const data = await fetch(`${API}/channels`).then(r => r.json());
     channels = Array.isArray(data.channels) ? data.channels : [];
   } catch {
-    // Fail-closed fallback mirroring the server default: guru absent by default.
+    // Fail-closed fallback mirroring the server default: guru disabled by default.
     channels = [
       { id: 'helper', label: 'Helper', domain: 'shared', enabled: true, aliases: ['@aorus', '@laptop'] },
       { id: 'tutor', label: 'Tutor', domain: 'shared', enabled: true, aliases: [] },
@@ -213,12 +242,11 @@ async function loadChannels() {
       { id: 'guru', label: 'Guru', domain: 'life', enabled: false, aliases: [] }
     ];
   }
-  // Default landing is the branded garets-chat "home" tab (broadcast view),
-  // matching the mockup's active primary tab — not a channel auto-selection.
+  // Default landing is the branded garets-chat "home" (broadcast view) — the
+  // brand is active by default, not a channel auto-selection.
   currentChannel = null;
   currentTo = null;
   renderChannelTabs();
-  renderChannelManage();
 }
 
 // C-pull "load full history" (garets-config#1051): reconstructs the active
@@ -401,17 +429,18 @@ document.getElementById('msg-input').addEventListener('keydown', e => { if (e.ke
 // SSE subscription for real-time messages + deletions
 function connect() {
   const es = new EventSource(`${API}/relay/${TOPIC}/stream`);
-  es.onopen = () => document.getElementById('status').textContent = 'connected';
+  es.onopen = () => setConn('online');
   es.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data);
       if (data.deleted) { removeMessageEl(data.deleted); return; }
-      if (data.receipt) { updateTicks(data.receipt.id, data.receipt.receipts); return; }
+      if (data.receipt) { notePresence(data.receipt.agent); updateTicks(data.receipt.id, data.receipt.receipts); return; }
+      notePresence(data.from);   // responder availability from live relay traffic
       renderMessage(data);
     } catch {}
   };
   es.onerror = () => {
-    document.getElementById('status').textContent = 'reconnecting...';
+    setConn('reconnecting');
     es.close();
     setTimeout(connect, 5000);
   };

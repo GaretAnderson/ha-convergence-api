@@ -175,72 +175,95 @@ test('channel tab header hides on scroll-down and reveals on scroll-up', async (
   });
 });
 
-test('channel selector is tab-first (branded garets-chat tab + channel tabs, no checkbox row) — issue #46', async () => {
+test('channel selector is a pills-only bar (brand + conn dot + solid/outline pills, no checkboxes) — issue #46', async () => {
   await withServerAndPage(async (browser) => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(`http://127.0.0.1:${PORT}/chat`);
-    await page.waitForSelector('#channel-tabs button');
+    await page.waitForSelector('#channel-tabs button.pill');
 
     // Rebrand: title + header read "garets-chat", not "Agent Chat".
     assert.equal(await page.title(), 'garets-chat', 'document title must read garets-chat');
     const headerText = await page.$eval('#chat-header h1', (el) => el.textContent.trim());
     assert.equal(headerText, 'garets-chat', 'header must read garets-chat');
 
-    // Branded primary tab is first and active by default (home view).
-    const brand = await page.$eval('#channel-tabs button.brand', (el) => ({
-      text: el.textContent.trim(), active: el.classList.contains('active')
+    // Brand sits on the pill row with a connection dot indicator and is the
+    // active "home" by default.
+    const brand = await page.$eval('#channel-tabs h1.brand', (el) => ({
+      text: el.textContent.trim(), active: el.classList.contains('active'),
+      hasDot: !!el.querySelector('#conn-dot.conn-dot')
     }));
-    assert.equal(brand.text, 'garets-chat', 'first tab must be the branded garets-chat tab');
-    assert.equal(brand.active, true, 'garets-chat tab must be active on load');
+    assert.equal(brand.text, 'garets-chat', 'brand must read garets-chat');
+    assert.equal(brand.active, true, 'brand (home) must be active on load');
+    assert.equal(brand.hasDot, true, 'brand must carry a connection dot indicator');
 
-    // Per-channel tabs render as buttons in the primary row (helper/tutor/...).
-    const tabLabels = await page.$$eval('#channel-tabs button[data-id]', (els) =>
-      els.map((e) => e.textContent.trim()));
-    assert.ok(tabLabels.some((t) => /helper/i.test(t)), 'helper must be a tab');
-    assert.ok(tabLabels.some((t) => /tutor/i.test(t)), 'tutor must be a tab');
+    // Pills for each channel (helper/tutor/...), each with an availability dot.
+    const pills = await page.$$eval('#channel-tabs button.pill[data-id]', (els) =>
+      els.map((e) => ({ id: e.getAttribute('data-id'), enabled: e.classList.contains('enabled'),
+        disabled: e.classList.contains('disabled'), hasAvail: !!e.querySelector('.avail') })));
+    const ids = pills.map((p) => p.id);
+    assert.ok(ids.includes('helper'), 'helper must be a pill');
+    assert.ok(ids.includes('tutor'), 'tutor must be a pill');
+    assert.ok(pills.every((p) => p.hasAvail), 'every pill must have a responder-availability dot');
 
-    // The primary row must NOT contain checkbox inputs (the old bug).
-    const primaryCheckboxes = await page.$$eval('#channel-tabs input[type=checkbox]', (els) => els.length);
-    assert.equal(primaryCheckboxes, 0, 'primary tab row must have no checkboxes');
-
-    // An overflow "…" tab exists and opens the secondary manage affordance.
-    const overflow = await page.$('#channel-tabs button.overflow');
-    assert.ok(overflow, 'an overflow "…" tab must exist');
-    let manageOpen = await page.$eval('#channel-manage', (el) => el.classList.contains('open'));
-    assert.equal(manageOpen, false, 'manage panel is hidden until overflow is clicked');
-    // Reveal the tab bar (seeded backlog auto-scrolls to bottom -> header collapses).
-    await page.$eval('#messages', (el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
-    await page.waitForTimeout(50);
-    await overflow.click();
-    manageOpen = await page.$eval('#channel-manage', (el) => el.classList.contains('open'));
-    assert.equal(manageOpen, true, 'overflow click reveals the manage panel');
-
-    // Enable/disable checkboxes live in the secondary manage panel, not the tabs.
-    const manageCheckboxes = await page.$$eval('#channel-manage input[type=checkbox]', (els) => els.length);
-    assert.ok(manageCheckboxes >= 1, 'per-channel enable/disable checkboxes live in the manage panel');
+    // Enabled channels render solid (.enabled); no channel uses a checkbox.
+    assert.equal(pills.find((p) => p.id === 'helper').enabled, true, 'helper (enabled) must be a solid pill');
+    const anyCheckbox = await page.$$eval('#chat-header input[type=checkbox]', (els) => els.length);
+    assert.equal(anyCheckbox, 0, 'there must be NO checkboxes anywhere in the header');
+    const managePanel = await page.$('#channel-manage');
+    assert.equal(managePanel, null, 'the separate manage/checkbox panel must be gone');
 
     await page.close();
   });
 });
 
-test('guru is domain-gated (life) — not shown as a normal shared tab by default — issue #46', async () => {
+test('clicking a pill selects it (and clicking the active pill toggles it off) — issue #46', async () => {
   await withServerAndPage(async (browser) => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(`http://127.0.0.1:${PORT}/chat`);
-    await page.waitForSelector('#channel-tabs button');
-
-    const tabIds = await page.$$eval('#channel-tabs button[data-id]', (els) =>
-      els.map((e) => e.getAttribute('data-id')));
-    assert.ok(!tabIds.includes('guru'), 'guru (life domain) must not appear as a default tab');
-
-    // It is present in the manage panel (so it can be explicitly enabled).
+    await page.waitForSelector('#channel-tabs button.pill');
+    // Reveal the bar (seeded backlog auto-scrolls -> header collapses).
     await page.$eval('#messages', (el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
     await page.waitForTimeout(50);
-    await page.click('#channel-tabs button.overflow');
-    const guruManage = await page.$('#channel-manage input[data-manage-id="guru"]');
-    assert.ok(guruManage, 'guru is available in the manage panel (gated, opt-in)');
-    const guruChecked = await page.$eval('#channel-manage input[data-manage-id="guru"]', (el) => el.checked);
-    assert.equal(guruChecked, false, 'guru must be disabled by default (fail-closed, local-only)');
+
+    // Click tutor -> tutor becomes the active pill, brand no longer active.
+    await page.click('#channel-tabs button.pill[data-id="tutor"]');
+    await page.waitForTimeout(100);
+    let tutorActive = await page.$eval('#channel-tabs button.pill[data-id="tutor"]', (el) => el.classList.contains('active'));
+    let brandActive = await page.$eval('#channel-tabs h1.brand', (el) => el.classList.contains('active'));
+    assert.equal(tutorActive, true, 'clicking tutor makes it the active pill');
+    assert.equal(brandActive, false, 'brand is no longer the active home');
+
+    // Click the active tutor pill again -> it disables (outline) and home is active again.
+    await page.$eval('#messages', (el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+    await page.waitForTimeout(50);
+    await page.click('#channel-tabs button.pill[data-id="tutor"]');
+    await page.waitForTimeout(150);   // setChannelEnabled awaits a POST before re-render
+    const tutorState = await page.$eval('#channel-tabs button.pill[data-id="tutor"]', (el) => ({
+      enabled: el.classList.contains('enabled'), active: el.classList.contains('active') }));
+    brandActive = await page.$eval('#channel-tabs h1.brand', (el) => el.classList.contains('active'));
+    assert.equal(tutorState.enabled, false, 'clicking the active pill disables it (outline)');
+    assert.equal(tutorState.active, false, 'the disabled pill is no longer active');
+    assert.equal(brandActive, true, 'home (brand) is active again after toggling off');
+
+    await page.close();
+  });
+});
+
+test('guru is domain-gated (life) — appears as a disabled outline pill by default — issue #46', async () => {
+  await withServerAndPage(async (browser) => {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`http://127.0.0.1:${PORT}/chat`);
+    await page.waitForSelector('#channel-tabs button.pill');
+
+    const guru = await page.$('#channel-tabs button.pill[data-id="guru"]');
+    assert.ok(guru, 'guru still appears as a pill (all pills always shown)');
+    const state = await page.$eval('#channel-tabs button.pill[data-id="guru"]', (el) => ({
+      enabled: el.classList.contains('enabled'), disabled: el.classList.contains('disabled'),
+      active: el.classList.contains('active'), title: el.getAttribute('title') || '' }));
+    assert.equal(state.enabled, false, 'guru must be disabled by default (fail-closed, local-only)');
+    assert.equal(state.disabled, true, 'guru renders as an outline (disabled) pill');
+    assert.equal(state.active, false, 'guru is not active by default');
+    assert.match(state.title, /life/, 'guru pill tooltip preserves its life-domain classification');
 
     await page.close();
   });

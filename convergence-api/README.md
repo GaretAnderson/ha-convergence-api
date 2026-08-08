@@ -34,8 +34,9 @@ message you send:
 
 It answers as the agent implied by the active tab's `to` (helper / tutor /
 advisor / threads), so switching tabs feels like talking to different agents.
-**guru stays gated** (life-domain, not a default tab). This lets you verify the
-tab-first UI, sending/receiving, receipts, markdown, the collapsing header, and
+**guru stays gated** (life-domain — shown as a disabled outline pill, never
+networked). This lets you verify the pill bar, sending/receiving, receipts,
+markdown, the collapsing header, and
 the sticky composer — all locally. `Ctrl+C` stops the server and responder.
 
 > Relay state persists between dev runs under `convergence-api/.dev-data/`
@@ -45,7 +46,7 @@ the sticky composer — all locally. `Ctrl+C` stops the server and responder.
 Run the browser (Playwright) UI checks with:
 
 ```bash
-npm run test:gui   # real Chromium: rebrand, tab-first, overflow, collapse, composer
+npm run test:gui   # real Chromium: rebrand, pills-only bar, select/toggle, collapse, composer
 ```
 
 ## Endpoints
