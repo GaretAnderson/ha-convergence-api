@@ -29,6 +29,8 @@ process.on('unhandledRejection', (reason) => {
 
 const express = require('express');
 const { renderMessageHtml } = require('./render.js');
+const { loadChannels, defaultVisible } = require('./channels.js');
+const { loadChannelHistory } = require('./history.js');
 const app = express();
 // Keep the proven-live port mapping (issue #43) — do NOT switch to 8188.
 const PORT = 8088;
@@ -43,7 +45,7 @@ app.use(express.json());
 // ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.4' });
+  res.json({ status: 'ok', uptime: process.uptime(), version: '0.9.5' });
 });
 
 // ─── Relay auth (issue #43) ──────────────────────────────────────────────────
@@ -97,6 +99,69 @@ function getTopic(name) {
   }
   return topics.get(name);
 }
+
+// ─── Purpose-channels (garets-config#1051 v1) ────────────────────────────────
+// Registry-driven channel model — replaces/subsumes @aorus/@laptop addressing.
+// Per-channel enable/disable persists across restarts (own small JSON file,
+// same pattern as relay-messages.json below). A disabled channel never
+// ingests: the history endpoint refuses to pull for it (see /channel/:id/history).
+
+const CHANNEL_STATE_FILE = path.join(DATA_DIR, 'channel-state.json');
+let channelState = {}; // channelId -> boolean (enabled override)
+
+function loadChannelState() {
+  try {
+    if (fs.existsSync(CHANNEL_STATE_FILE)) {
+      channelState = JSON.parse(fs.readFileSync(CHANNEL_STATE_FILE, 'utf8')) || {};
+    }
+  } catch (e) { console.error('[channels] state load failed:', e.message); }
+}
+function saveChannelState() {
+  try { fs.writeFileSync(CHANNEL_STATE_FILE, JSON.stringify(channelState)); }
+  catch (e) { console.error('[channels] state save failed:', e.message); }
+}
+loadChannelState();
+
+function channelsWithState() {
+  return loadChannels().map((c) => ({
+    ...c,
+    enabled: Object.prototype.hasOwnProperty.call(channelState, c.id) ? !!channelState[c.id] : !!c.enabledByDefault
+  }));
+}
+
+// GET /channels — registry-driven channel list (garets-config#1051), each with
+// its persisted enabled/disabled state. Guru ships disabled by default and
+// stays absent from the default view unless explicitly enabled.
+app.get('/channels', (_req, res) => {
+  res.json({ channels: channelsWithState() });
+});
+
+// POST /channels/:id/enabled — toggle a channel; persists across restarts.
+app.post('/channels/:id/enabled', (req, res) => {
+  const all = loadChannels();
+  const channel = all.find((c) => c.id === req.params.id);
+  if (!channel) return res.status(404).json({ error: 'unknown channel' });
+  channelState[req.params.id] = !!req.body.enabled;
+  saveChannelState();
+  console.log(`[channels] ${req.params.id}: enabled=${channelState[req.params.id]}`);
+  res.json({ id: req.params.id, enabled: channelState[req.params.id] });
+});
+
+// GET /channel/:id/history — C-pull "load full history" (garets-config#1051):
+// reconstructs the channel's transcript from events.jsonl + session-review
+// artifacts, v1 sourced with NO hard dependency on the session ledger #1019.
+// A disabled channel ingests nothing — refuse the pull with 403.
+app.get('/channel/:id/history', (req, res) => {
+  const all = loadChannels();
+  const channel = all.find((c) => c.id === req.params.id);
+  if (!channel) return res.status(404).json({ error: 'unknown channel' });
+  const enabled = Object.prototype.hasOwnProperty.call(channelState, channel.id)
+    ? !!channelState[channel.id]
+    : !!channel.enabledByDefault;
+  if (!enabled) return res.status(403).json({ error: 'channel disabled — ingests nothing' });
+  if (channel.ingestionPolicy === 'none') return res.status(403).json({ error: 'channel domain never ingests (life/local-only)' });
+  res.json(loadChannelHistory(channel));
+});
 
 // ─── Persistence (survives restarts; 90-day retention) ───────────────────────
 
@@ -310,6 +375,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  /api/health       — health check`);
   console.log(`  /relay/:topic     — publish (POST) / poll (GET)`);
   console.log(`  /relay/:topic/stream — SSE subscribe`);
+  console.log(`  /channels         — purpose-channel registry (garets-config#1051)`);
+  console.log(`  /channel/:id/history — C-pull full transcript (events.jsonl + session-review)`);
   console.log(`  /chat             — Agent Chat web UI (renders sanitized markdown)`);
   console.log(`  Relay max messages per topic: ${RELAY_MAX}`);
   console.log(`  Relay auth: OPEN (no relay_token enforcement — see issue #43)`);

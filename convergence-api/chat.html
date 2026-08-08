@@ -26,7 +26,17 @@ header .status { font-size: 12px; color: #4ecca3; }
 .msg .ticks .rcpt { color: #7a8aa0; }
 .msg .ticks .rcpt.read { color: #4ecca3; }
 .msg .ticks .rcpt.sent { font-style: italic; }
-#input-bar { padding: 12px; background: #16213e; border-top: 1px solid #0f3460; display: flex; gap: 8px; flex-wrap: wrap; }
+/* Three message classes (garets-config#1051): live relay (default), responder
+   auto-messages, and swept/pulled session content — rendered distinctly so
+   ambient/pulled content is never confused with a live conversation turn. */
+.msg.class-responder { border-left: 3px solid #7a8aa0; }
+.msg.class-swept-summary { background: #12213a; border: 1px dashed #4ecca3; }
+.msg.class-swept-summary .badge { display: inline-block; font-size: 10px; color: #4ecca3; border: 1px solid #4ecca3; border-radius: 8px; padding: 1px 6px; margin-bottom: 4px; }
+/* Composer is ALWAYS visible (garets-config#1051): sticky at the bottom of the
+   flex column at every scroll position, on desktop and mobile. Fixes the
+   pre-#1051 bug where #input-bar was a plain flex item that could scroll out
+   of view. */
+#input-bar { position: sticky; bottom: 0; z-index: 10; padding: 12px; background: #16213e; border-top: 1px solid #0f3460; display: flex; gap: 8px; flex-wrap: wrap; }
 #attach-btn { padding: 10px; border-radius: 50%; border: 1px solid #0f3460; background: transparent; color: #4ecca3; font-size: 18px; cursor: pointer; }
 #preview { width: 100%; display: none; gap: 6px; flex-wrap: wrap; padding: 4px; }
 #preview .thumb { position: relative; display: inline-block; }
@@ -36,9 +46,21 @@ header .status { font-size: 12px; color: #4ecca3; }
 #input-bar input:focus { border-color: #4ecca3; }
 #input-bar button { padding: 10px 18px; border-radius: 20px; border: none; background: #4ecca3; color: #1a1a2e; font-weight: 600; font-size: 14px; cursor: pointer; }
 #input-bar button:active { opacity: 0.8; }
-.addressing { padding: 8px 16px; background: #0f3460; display: flex; gap: 6px; overflow-x: auto; border-top: 1px solid #16213e; }
-.addressing button { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.addressing button.active { background: #4ecca3; color: #1a1a2e; }
+/* Channel tab header (garets-config#1051): hides on scroll-down, reveals on
+   scroll-up. Registry-driven — replaces the old @aorus/@laptop/@all addressing
+   bar. transform (not display:none) keeps the transition smooth and layout
+   stable, and lets a scripted/DOM test read the collapsed state reliably. */
+#channel-tabs { padding: 8px 16px; background: #0f3460; display: flex; gap: 6px; overflow-x: auto; border-top: 1px solid #16213e; transition: transform .18s ease, opacity .18s ease; transform: translateY(0); opacity: 1; }
+#channel-tabs.collapsed { transform: translateY(-100%); opacity: 0; pointer-events: none; }
+#channel-tabs button { padding: 4px 10px; border-radius: 12px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+#channel-tabs button.active { background: #4ecca3; color: #1a1a2e; }
+#channel-tabs button .domain-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+#channel-tabs button .domain-dot.life { background: #e94560; }
+#channel-tabs button .domain-dot.work { background: #f2b134; }
+#channel-tabs button .domain-dot.shared { background: #4ecca3; }
+#channel-manage { padding: 4px 16px 8px; background: #0f3460; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 11px; color: #9fb0c9; }
+#channel-manage label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#load-history-btn { align-self: center; margin: 8px auto; padding: 8px 14px; border-radius: 14px; border: 1px solid #4ecca3; background: transparent; color: #4ecca3; font-size: 12px; cursor: pointer; }
 /* Paged history: top loader, jump-to-latest pill, subtle message entrance */
 .load-older { align-self: center; padding: 10px 0; display: flex; }
 .spinner { width: 18px; height: 18px; border: 2px solid #0f3460; border-top-color: #4ecca3; border-radius: 50%; animation: spin .8s linear infinite; }
@@ -51,17 +73,16 @@ header .status { font-size: 12px; color: #4ecca3; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Agent Chat</h1>
-  <span class="status" id="status">connecting...</span>
-</header>
+<div id="chat-header">
+  <header>
+    <h1>Agent Chat</h1>
+    <span class="status" id="status">connecting...</span>
+  </header>
+  <div id="channel-tabs"></div>
+  <div id="channel-manage"></div>
+</div>
 <div id="messages"></div>
 <button id="jump-latest">↓ Latest</button>
-<div class="addressing">
-  <button class="active" data-to="@aorus">@aorus</button>
-  <button data-to="@laptop">@laptop</button>
-  <button data-to="@all">@all</button>
-</div>
 <div id="preview"></div>
 <div id="input-bar">
   <input type="file" id="file-input" accept="image/*" style="display:none">
@@ -75,17 +96,110 @@ header .status { font-size: 12px; color: #4ecca3; }
 // Strips the final path segment (the page itself) to get the directory prefix.
 const API = window.location.pathname.replace(/\/[^/]*$/, '');
 const TOPIC = 'agent-relay';
-let currentTo = '@aorus';
-let lastTimestamp = new Date(Date.now() - 3600000).toISOString();
+let channels = [];               // registry-driven purpose-channels (garets-config#1051)
+let currentChannel = null;       // active channel object
+let currentTo = null;            // resolved `to` for send() — channel handles+aliases
 
-// Addressing buttons
-document.querySelectorAll('.addressing button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.addressing button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    currentTo = btn.dataset.to;
+// ─── Purpose-channels (garets-config#1051 v1) ───────────────────────────────
+// Replaces the old @aorus/@laptop/@all addressing bar with registry-driven
+// channel tabs. Guru ships disabled by default (life-domain, local-only,
+// never ingested) and is not shown unless explicitly enabled via manage panel.
+
+function domainDot(domain) { return `<span class="domain-dot ${escapeHtml(domain)}" title="${escapeHtml(domain)} domain"></span>`; }
+
+function renderChannelTabs() {
+  const bar = document.getElementById('channel-tabs');
+  const visible = channels.filter(c => c.enabled);
+  bar.innerHTML = visible.map(c =>
+    `<button data-id="${escapeHtml(c.id)}" class="${c.id === (currentChannel && currentChannel.id) ? 'active' : ''}">${domainDot(c.domain)}${escapeHtml(c.label)}</button>`
+  ).join('') + `<button id="load-history-inline" title="Load full history">⟳ history</button>`;
+  bar.querySelectorAll('button[data-id]').forEach(btn => {
+    btn.addEventListener('click', () => selectChannel(btn.dataset.id));
   });
-});
+  const histBtn = document.getElementById('load-history-inline');
+  if (histBtn) histBtn.addEventListener('click', () => loadFullHistory());
+}
+
+function renderChannelManage() {
+  const panel = document.getElementById('channel-manage');
+  panel.innerHTML = channels.map(c =>
+    `<label><input type="checkbox" data-manage-id="${escapeHtml(c.id)}" ${c.enabled ? 'checked' : ''}> ${escapeHtml(c.label)} (${escapeHtml(c.domain)})</label>`
+  ).join('');
+  panel.querySelectorAll('input[data-manage-id]').forEach(cb => {
+    cb.addEventListener('change', () => setChannelEnabled(cb.dataset.manageId, cb.checked));
+  });
+}
+
+async function setChannelEnabled(id, enabled) {
+  try {
+    await fetch(`${API}/channels/${encodeURIComponent(id)}/enabled`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled })
+    });
+  } catch { /* best-effort; UI still reflects the toggle locally */ }
+  const c = channels.find(x => x.id === id);
+  if (c) c.enabled = enabled;
+  if (!enabled && currentChannel && currentChannel.id === id) {
+    const next = channels.find(x => x.enabled);
+    if (next) selectChannel(next.id);
+  }
+  renderChannelTabs();
+  renderChannelManage();
+}
+
+function selectChannel(id) {
+  const c = channels.find(x => x.id === id);
+  if (!c) return;
+  currentChannel = c;
+  currentTo = (c.handles && c.handles.length ? c.handles : c.aliases) || [c.id];
+  renderChannelTabs();
+}
+
+async function loadChannels() {
+  try {
+    const data = await fetch(`${API}/channels`).then(r => r.json());
+    channels = Array.isArray(data.channels) ? data.channels : [];
+  } catch {
+    // Fail-closed fallback mirroring the server default: guru absent by default.
+    channels = [
+      { id: 'helper', label: 'Helper', domain: 'shared', enabled: true, aliases: ['@aorus', '@laptop'] },
+      { id: 'tutor', label: 'Tutor', domain: 'shared', enabled: true, aliases: [] },
+      { id: 'advisor', label: 'Advisor', domain: 'work', enabled: true, aliases: [] },
+      { id: 'threads', label: 'Threads', domain: 'shared', enabled: true, aliases: [] },
+      { id: 'guru', label: 'Guru', domain: 'life', enabled: false, aliases: [] }
+    ];
+  }
+  const firstEnabled = channels.find(c => c.enabled) || channels[0];
+  if (firstEnabled) selectChannel(firstEnabled.id);
+  renderChannelTabs();
+  renderChannelManage();
+}
+
+// C-pull "load full history" (garets-config#1051): reconstructs the active
+// channel's transcript from events.jsonl + session-review artifacts on demand.
+async function loadFullHistory() {
+  if (!currentChannel) return;
+  addSystem(`Loading full history for ${currentChannel.label}…`);
+  try {
+    const data = await fetch(`${API}/channel/${encodeURIComponent(currentChannel.id)}/history`).then(r => {
+      if (!r.ok) throw new Error(`history unavailable (${r.status})`);
+      return r.json();
+    });
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+    if (!msgs.length) { addSystem('No pulled history found.'); return; }
+    for (const m of msgs) {
+      appendMessage({
+        id: `hist-${Math.random().toString(36).slice(2)}`,
+        from: m.from,
+        body: m.body,
+        timestamp: m.timestamp || Date.now(),
+        metadata: { msgClass: m.class === 'swept-summary' ? 'swept-summary' : 'responder' }
+      });
+    }
+  } catch (e) { addSystem('Load full history failed: ' + e.message); }
+}
+
 
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function imgTag(url) { return `<img class="att" src="${API}${url}" onclick="window.open('${API}${url}')">`; }
@@ -147,9 +261,15 @@ function buildMessageEl(msg) {
   if (!msg || !msg.id || seen.has(msg.id)) return null;
   seen.add(msg.id);
   const sent = msg.from === 'phone';
+  // Three message classes (garets-config#1051): 'live' (default, real-time
+  // relay turns), 'responder' (auto-messages), 'swept-summary' (B-feed /
+  // C-pull ingested content) — rendered with a distinct class + badge so
+  // ingested content is never mistaken for a live conversation turn.
+  const msgClass = (msg.metadata && msg.metadata.msgClass) || 'live';
   const div = document.createElement('div');
-  div.className = 'msg ' + (sent ? 'sent' : 'received');
+  div.className = 'msg ' + (sent ? 'sent' : 'received') + (msgClass !== 'live' ? ` class-${msgClass}` : '');
   div.dataset.id = msg.id;
+  div.dataset.msgClass = msgClass;
 
   let text = msg.body || '';
   const urls = [];
@@ -162,9 +282,11 @@ function buildMessageEl(msg) {
   // older persisted messages that predate it.
   const bodyHtml = msg.bodyHtml || (text.trim() ? `<p>${escapeHtml(text.trim())}</p>` : '');
   const time = new Date(msg.timestamp || Date.now()).toLocaleTimeString();
+  const badge = msgClass === 'swept-summary' ? '<span class="badge">swept summary</span>' : '';
 
   div.innerHTML =
     (sent ? '' : `<div class="from">${escapeHtml(msg.from)}</div>`) +
+    badge +
     (bodyHtml ? `<div class="text">${bodyHtml}</div>` : '') +
     urls.map(imgTag).join('') +
     `<div class="time">${time}${sent ? ticksSpan(msg) : ''}</div>` +
@@ -315,6 +437,29 @@ msgsEl().addEventListener('scroll', () => {
 document.getElementById('jump-latest').addEventListener('click', () => scrollToBottom(false));
 
 loadInitial();
+loadChannels();
+
+// Collapsing channel-tab header (garets-config#1051): hides on scroll-down,
+// reveals on scroll-up. Direction is compared against the LAST scrollTop
+// (not a fixed threshold), so a slow upward scroll of even a few pixels
+// reveals it immediately — matches the acceptance criterion literally.
+// Always shown when at/near the very top (nothing to hide from).
+(function collapsingHeader() {
+  const bar = document.getElementById('channel-tabs');
+  const scrollEl = msgsEl();
+  let lastTop = scrollEl.scrollTop;
+  scrollEl.addEventListener('scroll', () => {
+    const top = scrollEl.scrollTop;
+    if (top <= 4) {
+      bar.classList.remove('collapsed');
+    } else if (top > lastTop) {
+      bar.classList.add('collapsed');    // scrolling down -> hide
+    } else if (top < lastTop) {
+      bar.classList.remove('collapsed'); // scrolling up -> reveal
+    }
+    lastTop = top;
+  }, { passive: true });
+})();
 
 // Image attachments — paste, drop, or file picker; supports multiple per message
 async function uploadImage(file) {

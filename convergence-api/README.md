@@ -3,7 +3,9 @@
 Always-on API add-on for Home Assistant. Provides:
 
 - **Agent Relay** — real-time cross-machine messaging via SSE
-- **Agent Chat** — a chat UI (`/chat`) with server-rendered, sanitized markdown
+- **Agent Chat** — a chat UI (`/chat`) with server-rendered, sanitized markdown,
+  organized into **registry-driven purpose-channels** (helper/tutor/advisor/threads;
+  guru disabled/local-only by default — garets-config#1051)
 - **Health endpoint** — uptime and version check
 
 ## Endpoints
@@ -15,6 +17,31 @@ Always-on API add-on for Home Assistant. Provides:
 | GET | `/relay/:topic` | Poll recent messages (optional `?since=` ISO timestamp) |
 | GET | `/relay/:topic/stream` | SSE subscription (real-time push) |
 | GET | `/relay` | List all active topics with stats |
+| GET | `/channels` | Purpose-channel registry, each with its persisted enabled/disabled state |
+| POST | `/channels/:id/enabled` | Enable/disable a channel (`{"enabled": true\|false}`); persists across restarts |
+| GET | `/channel/:id/history` | C-pull "load full history" — reconstructs the channel's transcript from `events.jsonl` + session-review artifacts. 403 if the channel is disabled or its domain never ingests (`life`, e.g. guru). |
+
+## Purpose-channels (garets-config#1051)
+
+Agent Chat is organized into one channel per agent **purpose** (helper / tutor /
+advisor / threads), not per machine — replacing the old `@aorus`/`@laptop`/`@all`
+addressing. The channel list, domain classification (`life`/`work`/`shared`), and
+default enable state are **registry-driven**: `channels.json` is a vendored
+snapshot of garets-config's canonical `Get-RelayChannelRegistry`
+(`lib/RelayResponder.ps1`), exported via `tools/Export-AgentChatChannels.ps1`.
+Re-export + copy `channels.json` here whenever the garets-config registry changes.
+
+- **guru** is `life`-domain, ships **disabled by default**, and its ingestion
+  policy is always `none` (never pulled/ingested) — fail-closed local-only,
+  per garets-config#908.
+- **C-pull** ("load full history") sources v1 transcripts from `events.jsonl` +
+  session-review markdown — see `history.js`. Configure `AGENT_EVENTS_ROOT` /
+  `AGENT_SESSION_REVIEW_ROOT` to point at the mounted Copilot CLI session-state
+  directories; missing/unmounted paths degrade to an empty transcript, never
+  an error. No hard dependency on the (unbuilt) session ledger garets-config#1019.
+- Channel tabs collapse on scroll-down and reveal on scroll-up; the composer
+  (`#input-bar`) is sticky and always visible, at every scroll position,
+  desktop and mobile.
 
 ## Agent Relay
 
@@ -52,6 +79,13 @@ curl http://homeassistant.local:8088/relay/agent-relay?since=2026-07-13T12:00:00
 | `github_token` | (empty) | GitHub PAT for future thread-board integration |
 | `cards_repo` | `GaretAnderson/thread-board-cards` | Thread board cards repo |
 | `relay_max_messages` | 50 | Max messages retained per topic |
+
+## Environment variables (channels / C-pull)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENT_EVENTS_ROOT` | (unset) | Root directory containing `<agent>/**/events.jsonl` session logs, for C-pull |
+| `AGENT_SESSION_REVIEW_ROOT` | (unset) | Root directory containing `<agent>/*.md` session-review summaries |
 
 ## Port
 
