@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "dev": "node tools/dev-serve.js",
     "test": "npm run test:unit && node --test tests/render.test.js tests/auth.test.js tests/addressing.test.js tests/channels.integration.js && npm run test:smoke",
     "test:unit": "node tests/receipts.unit.js && node --test tests/channels.unit.js tests/history.unit.js",
     "test:smoke": "node --test tests/smoke.test.js",
